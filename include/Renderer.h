@@ -1,0 +1,9 @@
+#ifndef DUNGEON_PARTY_RENDERER_H
+#define DUNGEON_PARTY_RENDERER_H
+
+
+class Renderer {
+};
+
+
+#endif //DUNGEON_PARTY_RENDERER_H
