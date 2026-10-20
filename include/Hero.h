@@ -3,6 +3,14 @@
 
 
 class Hero {
+private:
+    int health;
+
+public:
+    explicit Hero(int startingHealth);
+    int getHealth() const;
+    void takeDamage(int amount);
+    bool isAlive() const;
 };
 
 
