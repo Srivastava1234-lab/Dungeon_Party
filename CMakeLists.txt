@@ -9,6 +9,7 @@ include(FetchContent)
 
 #Include headers folder
 include_directories(include)
+include_directories(external/glad/include)
 
 #GLFW
 FetchContent_Declare(
@@ -18,13 +19,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glfw)
 
-#GLAD via FetchContent
-FetchContent_Declare(
-        glad
-        GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-        GIT_TAG        v0.1.36
-)
-FetchContent_MakeAvailable(glad)
+#Compile GLAD locally to avoid python issue on fetch and 17 headaches
+add_library(glad_lib STATIC external/glad/src/glad.c)
+target_include_directories(glad_lib PUBLIC external/glad/include)
 
 #GLM
 FetchContent_Declare(
@@ -46,7 +43,7 @@ add_executable(${PROJECT_NAME}
 )
 
 #Link libraries
-target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad glm)
+target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad_lib glm)
 
 #Link OpenGL for Windows
 if (WIN32)
