@@ -11,6 +11,7 @@
 #include "Hero.h"
 #include "Monster.h"
 #include "DungeonMaster.h"
+#include "TurnIndicator.h"
 
 int main()
 {
@@ -150,9 +151,13 @@ int main()
             {
                 // 1. TOP BAR: Status & Round Info
                 ImGui::BeginChild("TopStatusBar", ImVec2(0, 40), true);
-                ImGui::Text("Round: %d / %d", currentMatch->getRound(), 20);
-                ImGui::SameLine(200);
-                ImGui::Text("Phase: Active Turn");
+                if (auto* active = currentMatch->getActivePlayer()) {
+                    if (ImGui::Button("End turn")) currentMatch->endTurn(*active);
+                    ImGui::SameLine();
+                }
+                drawTurnIndicator(*currentMatch);
+
+
                 ImGui::EndChild();
 
                 // 2. MIDDLE BATTLEFIELD: Background & Combatants
