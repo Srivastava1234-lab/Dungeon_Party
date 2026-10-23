@@ -108,3 +108,18 @@ target_link_libraries(validate_data PRIVATE game_data)
 
 enable_testing()
 add_test(NAME data_validation COMMAND validate_data)
+# SCRUM-18: drawing and mana regression tests (checks remain active in Release).
+add_executable(drawing_mana_tests
+        tests/drawing_mana_tests.cpp
+        src/Card.cpp
+        src/DungeonMaster.cpp
+        src/Hero.cpp
+        src/Match.cpp
+        src/Monster.cpp
+        src/Player.cpp
+        src/Trap.cpp
+)
+target_include_directories(drawing_mana_tests PRIVATE include)
+foreach(case_name drawing mana_boundaries spending_turns rejected_play)
+    add_test(NAME drawing_mana_${case_name} COMMAND drawing_mana_tests ${case_name})
+endforeach()
