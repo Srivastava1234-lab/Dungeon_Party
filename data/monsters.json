@@ -1,0 +1,14 @@
+{
+  "_note": "Monster definitions (SCRUM-5). Entries with \"temporary\": true use placeholder values until Irma confirms the final game values.",
+  "monsters": [
+    {
+      "id": "goblin",
+      "name": "Goblin",
+      "maxHealth": 20,
+      "attackPower": 1,
+      "boss": false,
+      "temporary": true,
+      "_note": "maxHealth 20 is copied from Kagan's console_main.cpp. attackPower 1 is a PLACEHOLDER: no attack value exists anywhere yet. Irma must confirm the real value."
+    }
+  ]
+}
