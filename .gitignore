@@ -1,1 +1,18 @@
+#Build directories
+cmake-build-*/
 build/
+bin/
+
+#IDE files
+.idea/
+.vscode/
+
+#Compiled object files
+*.slo
+*.lo
+*.o
+*.obj
+*.gch
+*.pch
+*.exe
+*.out
