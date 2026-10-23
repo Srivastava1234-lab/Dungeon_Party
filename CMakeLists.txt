@@ -34,12 +34,14 @@ FetchContent_MakeAvailable(glm)
 #Add all source files
 add_executable(${PROJECT_NAME}
         main.cpp
-        src/Game.cpp
-        src/Hero.cpp
         src/Card.cpp
-        src/Deck.cpp
         src/Renderer.cpp
-        src/Boss.cpp
+        src/Hero.cpp
+        src/Match.cpp
+        src/DungeonMaster.cpp
+        src/Monster.cpp
+        src/Player.cpp
+        src/Trap.cpp
 )
 
 #Link libraries
