@@ -6,9 +6,34 @@
 #include "imgui_impl_opengl3.h"
 #include <iostream>
 #include "Renderer.h"
+#include "TurnIndicator.h"
+#include "GameData.h"
+#include <memory>
 
 int main()
 {
+    // Minimal battle setup until the shared match setup flow is integrated.
+    std::unique_ptr<Match> match;
+    Hero* battleHero = nullptr;
+    std::vector<Monster*> battleMonsters;
+    try {
+        GameData data(GameData::defaultDataDirectory());
+        const auto level = data.loadLevel(1);
+        match = std::make_unique<Match>("battle-1", level.maxRounds);
+        auto hero = std::make_unique<Hero>("hero-1", "Hero", HeroType{HeroClass::WARRIOR, 30}, 10);
+        battleHero = hero.get();
+        match->addPlayer(std::move(hero));
+        match->addPlayer(std::make_unique<DungeonMaster>("dm-1", "Dungeon Master", 3));
+        for (int i = 1; i <= 3; ++i) {
+            auto monster = std::make_unique<Monster>("Goblin " + std::to_string(i), 10);
+            battleMonsters.push_back(monster.get());
+            match->addMonster(std::move(monster));
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Cannot set up match: " << e.what() << '\n';
+        return -1;
+    }
+
     if (!glfwInit())
     {
         std::cerr << "Failed to initialize GLFW\n";
@@ -48,15 +73,7 @@ int main()
 
     std::cout << "OpenGL loaded: " << glGetString(GL_VERSION) << "\n";
 
-    // test:
     Screen screen = Screen::Start;
-    Character hero{"Hero", 20, 30, 4, 10};
-    std::vector<Character> monsters = {
-    {"Goblin 1", 10, 10, 5, 5},
-    {"Goblin 2", 7, 10, 3, 5},
-    {"Goblin 3", 10, 10, 5, 5}
-};
-
 
     // Main loop clear screen to a color until window closed
     while (!glfwWindowShouldClose(window))
@@ -83,6 +100,7 @@ int main()
             ImGui::Text("DUNGEON PARTY");
             if (ImGui::Button("Start match", ImVec2(-1, 70)))
             {
+                match->start();
                 screen = Screen::Battle;
             }
             ImGui::End();
@@ -94,11 +112,16 @@ int main()
             
             ImGui::Begin("Test");
 
-            drawCharacter(hero);
+            if (auto* active = match->getActivePlayer()) {
+                if (ImGui::Button("End turn")) match->endTurn(*active);
+            }
+            drawTurnIndicator(*match);
+            drawCharacter(Character{battleHero->getName(), battleHero->getHealth(),
+                                    battleHero->getType().maxHealth, battleHero->getMana(), 10});
             ImGui::SameLine(300);
-            for (size_t i = 0; i < monsters.size(); i++) {
+            for (size_t i = 0; i < battleMonsters.size(); i++) {
                 if (i > 0) ImGui::SameLine();
-                drawCharacter(monsters[i]);
+                drawCharacter(Character{battleMonsters[i]->getName(), battleMonsters[i]->getHealth(), 10, 0, 0});
             }
 
             ImGui::End();
