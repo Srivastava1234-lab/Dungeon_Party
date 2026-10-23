@@ -76,6 +76,7 @@ add_executable(${PROJECT_NAME}
         src/Player.cpp
         src/Renderer.cpp
         src/Trap.cpp
+        include/stb_image.h
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
