@@ -8,15 +8,17 @@
 //   validate_data <dataFolder>    checks another data folder
 //
 // Exit code:
-//   0 = the data is OK (temporary values are only warnings)
+//   0 = the data is OK (temporary values and missing pictures are only warnings)
 //   1 = the data has an error (the message says which file and which entry)
 //
 // This program only uses GameData.h / GameData.cpp. It does not need the game window,
 // OpenGL or any of the game logic classes, so it builds quickly.
 
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "GameData.h"
@@ -86,10 +88,14 @@ void printHeroes(const GameData& data) {
     for (const HeroDefinition& hero : data.getHeroes()) {
         std::cout << "  " << hero.id << "  \"" << hero.name << "\"  " << heroClassName(hero.heroClass)
                   << "  health " << hero.maxHealth << "  mana " << hero.maxMana << "  deck:";
+        if (hero.startingDeck.empty()) {
+            std::cout << " (empty)";
+        }
         for (const DeckEntry& line : hero.startingDeck) {
             std::cout << " " << line.count << "x " << line.cardId;
         }
         std::cout << temporaryMark(hero.temporary) << "\n";
+        std::cout << "      image: " << hero.image << "\n";
     }
 }
 
@@ -99,7 +105,18 @@ void printMonsters(const GameData& data) {
         std::cout << "  " << monster.id << "  \"" << monster.name << "\"  health " << monster.maxHealth
                   << "  attack " << monster.attackPower << "  boss " << (monster.boss ? "yes" : "no")
                   << temporaryMark(monster.temporary) << "\n";
+        std::cout << "      image: " << monster.image << "\n";
     }
+}
+
+void printRules(const RulesDefinition& rules) {
+    std::cout << "Rules (rules.json):" << temporaryMark(rules.temporary) << "\n"
+              << "  max cards played per turn: " << rules.maxCardsPlayedPerTurn << "\n"
+              << "  cards drawn per turn:      " << rules.cardsDrawnPerTurn << "\n"
+              << "  shuffle deck at start:     " << (rules.shuffleDeckAtMatchStart ? "yes" : "no") << "\n"
+              << "  refill mana each round:    " << (rules.refillManaEachRound ? "yes" : "no") << "\n"
+              << "  max mana increase / round: " << rules.maxManaIncreasePerRound << "\n"
+              << "  hero turn time limit:      " << rules.heroTurnTimeLimitSeconds << " s\n";
 }
 
 void printLevel(const LevelDefinition& level) {
@@ -111,7 +128,7 @@ void printLevel(const LevelDefinition& level) {
     }
     std::cout << "\n  monsters:";
     for (const LevelMonsterEntry& line : level.monsters) {
-        std::cout << " " << line.count << "x " << line.monsterId;
+        std::cout << " " << line.countPerHero << "x " << line.monsterId << " per hero";
     }
     std::cout << "\n";
 }
@@ -128,10 +145,40 @@ std::vector<std::string> findTemporaryEntries(const GameData& data, const LevelD
     for (const MonsterDefinition& monster : data.getMonsters()) {
         if (monster.temporary) entries.push_back("monsters.json: monster \"" + monster.id + "\"");
     }
+    if (data.getRules().temporary) {
+        entries.push_back("rules.json");
+    }
     if (level.temporary) {
         entries.push_back("levels/level_" + std::to_string(level.number) + ".json");
     }
     return entries;
+}
+
+// Picture paths are relative to the project folder, which is the folder that contains data/.
+// Returns true if the picture file exists. (Never throws: errors count as "not found".)
+bool imageExists(const std::string& dataFolder, const std::string& image) {
+    std::filesystem::path folder = std::filesystem::absolute(dataFolder).lexically_normal();
+    if (folder.filename().empty()) {
+        folder = folder.parent_path(); // the path ended with '/', e.g. "data/"
+    }
+    std::error_code error;
+    return std::filesystem::exists(folder.parent_path() / image, error);
+}
+
+// Collects every hero/monster picture that cannot be found on disk.
+std::vector<std::string> findMissingImages(const GameData& data, const std::string& dataFolder) {
+    std::vector<std::string> missing;
+    for (const HeroDefinition& hero : data.getHeroes()) {
+        if (!imageExists(dataFolder, hero.image)) {
+            missing.push_back(hero.image + "  (hero \"" + hero.id + "\")");
+        }
+    }
+    for (const MonsterDefinition& monster : data.getMonsters()) {
+        if (!imageExists(dataFolder, monster.image)) {
+            missing.push_back(monster.image + "  (monster \"" + monster.id + "\")");
+        }
+    }
+    return missing;
 }
 
 } // namespace
@@ -151,26 +198,38 @@ int main(int argc, char* argv[]) {
     try {
         // Loading also checks everything. If something is wrong, a GameDataError
         // is thrown and we jump straight to the "catch" part below.
-        const GameData data(dataFolder);              // cards.json, heroes.json, monsters.json
+        const GameData data(dataFolder);                 // cards, heroes, monsters, rules
         const LevelDefinition level = data.loadLevel(1); // levels/level_1.json
 
         printCards(data);
         printHeroes(data);
         printMonsters(data);
+        printRules(data.getRules());
         printLevel(level);
 
         const std::vector<std::string> temporary = findTemporaryEntries(data, level);
         if (!temporary.empty()) {
             std::cout << "\nWARNING: " << temporary.size()
-                      << " entries still use TEMPORARY values (to be confirmed by Irma):\n";
+                      << " entries still use TEMPORARY values (not confirmed as final yet):\n";
             for (const std::string& entry : temporary) {
                 std::cout << "  - " << entry << "\n";
             }
         }
 
+        // A missing picture is only a warning: the data itself is still valid.
+        const std::vector<std::string> missingImages = findMissingImages(data, dataFolder);
+        if (!missingImages.empty()) {
+            std::cout << "\nWARNING: " << missingImages.size()
+                      << " picture file(s) not found (paths are relative to the project folder):\n";
+            for (const std::string& image : missingImages) {
+                std::cout << "  - " << image << "\n";
+            }
+        }
+
         std::cout << "\nData check PASSED";
-        if (!temporary.empty()) {
-            std::cout << " (with " << temporary.size() << " temporary entries)";
+        if (!temporary.empty() || !missingImages.empty()) {
+            std::cout << " (with " << temporary.size() << " temporary entries, "
+                      << missingImages.size() << " missing pictures)";
         }
         std::cout << ".\n";
         return 0;

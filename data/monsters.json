@@ -1,14 +1,15 @@
 {
-  "_note": "Monster definitions (SCRUM-5). Entries with \"temporary\": true use placeholder values until Irma confirms the final game values.",
+  "_note": "Monster definitions (SCRUM-5). Sprint 1 has no boss monster. Entries with \"temporary\": true are not confirmed as final yet.",
   "monsters": [
     {
       "id": "goblin",
       "name": "Goblin",
-      "maxHealth": 20,
-      "attackPower": 1,
+      "maxHealth": 100,
+      "attackPower": 15,
       "boss": false,
+      "image": "assets/Monster_Artwork.png",
       "temporary": true,
-      "_note": "maxHealth 20 is copied from Kagan's console_main.cpp. attackPower 1 is a PLACEHOLDER: no attack value exists anywhere yet. Irma must confirm the real value."
+      "_note": "maxHealth 100 and attackPower 15 come from the Sprint 1 requirements (team chat, 23.10.2026). The image is the monster artwork in assets/."
     }
   ]
 }

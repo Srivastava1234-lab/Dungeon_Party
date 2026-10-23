@@ -134,17 +134,30 @@ bool readTrueFalse(const json& object, const std::string& key, const std::string
     return value.get<bool>();
 }
 
-// Reads a list [ ... ] that must contain at least one entry.
+// Reads a list [ ... ]. Unless 'mayBeEmpty' is true, the list must contain at least one entry.
 // Returns a copy of the list (the lists are small, and a copy is always safe to keep).
-json readList(const json& object, const std::string& key, const std::string& where) {
+json readList(const json& object, const std::string& key, const std::string& where,
+              bool mayBeEmpty = false) {
     const json& value = requireField(object, key, where);
     if (!value.is_array()) {
         fail(where, "\"" + key + "\" must be a list [ ... ]");
     }
-    if (value.empty()) {
+    if (value.empty() && !mayBeEmpty) {
         fail(where, "\"" + key + "\" must contain at least one entry");
     }
     return value;
+}
+
+// Reads the "image" field: a picture file path relative to the project folder.
+// Only '/' is allowed as separator, so the same path works on Windows and Linux.
+// Whether the file exists is not checked here (the loader only checks the data format);
+// validate_data prints a warning when a picture file is missing.
+std::string readImagePath(const json& object, const std::string& where) {
+    std::string path = readText(object, "image", where);
+    if (path.find('\\') != std::string::npos) {
+        fail(where, "\"image\" must use / instead of \\ (found \"" + path + "\")");
+    }
+    return path;
 }
 
 // Reads the "id" field: not empty, only lowercase letters, digits and '_'.
@@ -212,6 +225,7 @@ GameData::GameData(const std::string& directory)
     loadCards();
     loadHeroes();   // must come after loadCards(): hero decks refer to cards
     loadMonsters();
+    loadRules();
 }
 
 std::string GameData::defaultDataDirectory() {
@@ -282,9 +296,11 @@ void GameData::loadHeroes() {
         hero.heroClass = toHeroClass(readText(entry, "heroClass", where), where);
         hero.maxHealth = readNumber(entry, "maxHealth", 1, where);
         hero.maxMana = readNumber(entry, "maxMana", 0, where);
+        hero.image = readImagePath(entry, where);
 
         // Starting deck: every line must name an existing HEROES card.
-        const json deck = readList(entry, "startingDeck", where);
+        // An empty deck [] is allowed: an empty deck is a valid state in the game.
+        const json deck = readList(entry, "startingDeck", where, true);
         for (std::size_t j = 0; j < deck.size(); ++j) {
             const std::string deckWhere = where + ", startingDeck #" + std::to_string(j + 1);
             requireObject(deck[j], deckWhere);
@@ -328,11 +344,27 @@ void GameData::loadMonsters() {
         monster.name = readText(entry, "name", where);
         monster.maxHealth = readNumber(entry, "maxHealth", 1, where);
         monster.attackPower = readNumber(entry, "attackPower", 0, where);
-        monster.boss = readTrueFalse(entry, "boss", where);
+        monster.boss = readTrueFalse(entry, "boss", where);   // UML Monster.boss, not the DM role
+        monster.image = readImagePath(entry, where);
         monster.temporary = readTrueFalse(entry, "temporary", where);
 
         monsters.push_back(monster);
     }
+}
+
+void GameData::loadRules() {
+    const std::string fileName = "rules.json";
+    const json root = readJsonFile(dataDirectory, fileName);
+
+    // Only the format and the allowed ranges are checked here.
+    // Applying the rules is the job of the game logic, not of the loader.
+    rules.maxCardsPlayedPerTurn = readNumber(root, "maxCardsPlayedPerTurn", 1, fileName);
+    rules.cardsDrawnPerTurn = readNumber(root, "cardsDrawnPerTurn", 0, fileName);
+    rules.shuffleDeckAtMatchStart = readTrueFalse(root, "shuffleDeckAtMatchStart", fileName);
+    rules.refillManaEachRound = readTrueFalse(root, "refillManaEachRound", fileName);
+    rules.maxManaIncreasePerRound = readNumber(root, "maxManaIncreasePerRound", 0, fileName);
+    rules.heroTurnTimeLimitSeconds = readNumber(root, "heroTurnTimeLimitSeconds", 1, fileName);
+    rules.temporary = readTrueFalse(root, "temporary", fileName);
 }
 
 LevelDefinition GameData::loadLevel(int number) const {
@@ -367,7 +399,8 @@ LevelDefinition GameData::loadLevel(int number) const {
         level.defaultHeroes.push_back(id);
     }
 
-    // monsters: a list of { "monster": "<id>", "count": <number> }
+    // monsters: a list of { "monster": "<id>", "countPerHero": <number> }
+    // countPerHero = how many of this monster appear per hero player (no fixed total).
     const json monsterList = readList(root, "monsters", fileName);
     for (std::size_t i = 0; i < monsterList.size(); ++i) {
         const std::string where = fileName + ", monsters #" + std::to_string(i + 1);
@@ -375,7 +408,7 @@ LevelDefinition GameData::loadLevel(int number) const {
 
         LevelMonsterEntry line;
         line.monsterId = readText(monsterList[i], "monster", where);
-        line.count = readNumber(monsterList[i], "count", 1, where);
+        line.countPerHero = readNumber(monsterList[i], "countPerHero", 1, where);
         if (findMonster(line.monsterId) == nullptr) {
             fail(where, "unknown monster \"" + line.monsterId + "\" (not found in monsters.json)");
         }
@@ -430,4 +463,5 @@ const MonsterDefinition& GameData::getMonster(const std::string& id) const {
 const std::vector<CardDefinition>& GameData::getCards() const { return cards; }
 const std::vector<HeroDefinition>& GameData::getHeroes() const { return heroes; }
 const std::vector<MonsterDefinition>& GameData::getMonsters() const { return monsters; }
+const RulesDefinition& GameData::getRules() const { return rules; }
 const std::string& GameData::getDataDirectory() const { return dataDirectory; }
