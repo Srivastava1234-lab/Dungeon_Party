@@ -1,0 +1,11 @@
+{
+  "_note": "Level 1 for Sprint 1: one hero against one kind of monster. maxRounds 20 is the current default in Kagan's Match.h; 1 Goblin is copied from console_main.cpp. defaultHeroes is only used until role selection exists (Sprint 2). Not final.",
+  "number": 1,
+  "name": "Level 1",
+  "maxRounds": 20,
+  "defaultHeroes": ["warrior"],
+  "monsters": [
+    { "monster": "goblin", "count": 1 }
+  ],
+  "temporary": true
+}

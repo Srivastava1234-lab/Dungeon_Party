@@ -1,0 +1,16 @@
+{
+  "_note": "Card definitions (SCRUM-5). Entries with \"temporary\": true use placeholder values until Irma confirms the final game values.",
+  "cards": [
+    {
+      "id": "strike",
+      "name": "Strike",
+      "side": "HEROES",
+      "effect": "ATTACK",
+      "manaCost": 1,
+      "value": 6,
+      "description": "Deal damage to one monster.",
+      "temporary": true,
+      "_note": "manaCost 1 and value 6 are copied from Kagan's console_main.cpp. Not final."
+    }
+  ]
+}
