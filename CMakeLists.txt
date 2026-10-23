@@ -33,12 +33,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json)
 
-# Local GLAD Library Setup
+#IMGUI //ss
+FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG        v1.91.5
+)
+FetchContent_MakeAvailable(imgui)
+
+add_library(imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(imgui PUBLIC glfw)
 
 add_library(glad_lib STATIC external/glad/src/glad.c)
 target_include_directories(glad_lib PUBLIC external/glad/include)
-
-# game_data Library (SCRUM-5 JSON Loader)
 
 add_library(game_data STATIC
         src/GameData.cpp
@@ -49,8 +65,7 @@ target_compile_definitions(game_data PRIVATE
         DUNGEON_PARTY_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
 )
 
-# Main Game Executable
-
+#Add all source files
 add_executable(${PROJECT_NAME}
         main.cpp
         src/Card.cpp
@@ -68,9 +83,22 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         glm::glm
         glad_lib
         game_data
+        imgui
 )
 
 # validate_data Tool & Tests (SCRUM-5)
+
+add_executable(console_game
+        console_main.cpp
+        src/Card.cpp
+        src/DungeonMaster.cpp
+        src/Hero.cpp
+        src/Match.cpp
+        src/Monster.cpp
+        src/Player.cpp
+        src/Trap.cpp
+)
+target_link_libraries(console_game PRIVATE game_data)
 
 add_executable(validate_data
         tools/validate_data.cpp
