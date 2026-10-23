@@ -37,6 +37,8 @@ public:
     Phase getPhase() const;
     const std::string& getMatchId() const;
     std::optional<Side> getWinner() const;
+    const std::vector<Hero*>& getHeroes() const { return heroes; }
+    const std::vector<std::unique_ptr<Monster>>& getMonsters() const { return monsters; }
     Player* getActivePlayer() const;
 
 };

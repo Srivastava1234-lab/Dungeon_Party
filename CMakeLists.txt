@@ -77,6 +77,7 @@ add_executable(${PROJECT_NAME}
         src/Renderer.cpp
         src/TurnIndicator.cpp
         src/Trap.cpp
+        include/stb_image.h
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE

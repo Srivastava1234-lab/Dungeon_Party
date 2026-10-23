@@ -6,34 +6,15 @@
 #include "imgui_impl_opengl3.h"
 #include <iostream>
 #include "Renderer.h"
-#include "TurnIndicator.h"
 #include "GameData.h"
-#include <memory>
+#include "Match.h"
+#include "Hero.h"
+#include "Monster.h"
+#include "DungeonMaster.h"
+#include "TurnIndicator.h"
 
 int main()
 {
-    // Minimal battle setup until the shared match setup flow is integrated.
-    std::unique_ptr<Match> match;
-    Hero* battleHero = nullptr;
-    std::vector<Monster*> battleMonsters;
-    try {
-        GameData data(GameData::defaultDataDirectory());
-        const auto level = data.loadLevel(1);
-        match = std::make_unique<Match>("battle-1", level.maxRounds);
-        auto hero = std::make_unique<Hero>("hero-1", "Hero", HeroType{HeroClass::WARRIOR, 30}, 10);
-        battleHero = hero.get();
-        match->addPlayer(std::move(hero));
-        match->addPlayer(std::make_unique<DungeonMaster>("dm-1", "Dungeon Master", 3));
-        for (int i = 1; i <= 3; ++i) {
-            auto monster = std::make_unique<Monster>("Goblin " + std::to_string(i), 10);
-            battleMonsters.push_back(monster.get());
-            match->addMonster(std::move(monster));
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "Cannot set up match: " << e.what() << '\n';
-        return -1;
-    }
-
     if (!glfwInit())
     {
         std::cerr << "Failed to initialize GLFW\n";
@@ -73,7 +54,29 @@ int main()
 
     std::cout << "OpenGL loaded: " << glGetString(GL_VERSION) << "\n";
 
+    // Test state and match setup
     Screen screen = Screen::Start;
+    std::unique_ptr<Match> currentMatch = nullptr;
+
+    Character hero{"Hero", 20, 30, 4, 10};
+    std::vector<Character> monsters = {
+        {"Goblin 1", 10, 10, 5, 5},
+        {"Goblin 2", 7, 10, 3, 5},
+        {"Goblin 3", 10, 10, 5, 5}
+    };
+
+    // Initialize GameData loading from the data/ folder
+    GameData gameData(GameData::defaultDataDirectory());
+
+    // Load PNG Textures at startup
+    GLuint warriorTexture = 0;
+    GLuint monsterTexture = 0;
+    GLuint bgTexture = 0;
+    int width, height;
+
+    LoadTextureFromFile("assets/Warrior_Artwork.png", &warriorTexture, &width, &height);
+    LoadTextureFromFile("assets/Monster_Artwork.png", &monsterTexture, &width, &height);
+    LoadTextureFromFile("assets/Level_1_Artwork.png", &bgTexture, &width, &height);
 
     // Main loop clear screen to a color until window closed
     while (!glfwWindowShouldClose(window))
@@ -87,8 +90,9 @@ int main()
 
         if (screen == Screen::Start)
         {
-
-            // ImGui::ShowDemoWindow();
+            GLuint warriorTexture = 0;
+            int wWidth, wHeight;
+            LoadTextureFromFile("assets/warrior.png", &warriorTexture, &wWidth, &wHeight);
             ImGuiIO &io = ImGui::GetIO();
             ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                     ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -100,28 +104,128 @@ int main()
             ImGui::Text("DUNGEON PARTY");
             if (ImGui::Button("Start match", ImVec2(-1, 70)))
             {
-                match->start();
+                // 1. Load Level 1 definition from JSON using GameData
+                LevelDefinition lvl1 = gameData.loadLevel(1);
+
+                // 2. Initialize the Match object using level max rounds
+                currentMatch = std::make_unique<Match>("match_1", lvl1.maxRounds);
+
+                // 3. Load the default Hero for Level 1 (e.g., Warrior)
+                if (!lvl1.defaultHeroes.empty())
+                {
+                    const auto& heroDef = gameData.getHero(lvl1.defaultHeroes[0]);
+                    auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
+
+                    currentMatch->addPlayer(std::move(loadedHero));
+                }
+
+                // 3.5. Create and add the Dungeon Master (Required by Match rules!)
+                auto dungeonMaster = std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10);
+                currentMatch->addPlayer(std::move(dungeonMaster));
+
+                // 4. Load Level 1 Monsters dynamically from JSON
+                for (const auto& monsterEntry : lvl1.monsters)
+                {
+                    const auto& monsterDef = gameData.getMonster(monsterEntry.monsterId);
+                    for (int i = 0; i < monsterEntry.count; ++i)
+                    {
+                        auto monster = std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss);
+                        currentMatch->addMonster(std::move(monster));
+                    }
+                }
+
+                // 5. Start the match and switch to the battle screen
+                currentMatch->start();
                 screen = Screen::Battle;
             }
             ImGui::End();
         }
-
         else {
-            //test window
-            ImGui::SetNextWindowSize(ImVec2(1100, 400));
-            
-            ImGui::Begin("Test");
+            // Full-screen battle layout
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+            ImGui::Begin("Dungeon Party - Battle", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-            if (auto* active = match->getActivePlayer()) {
-                if (ImGui::Button("End turn")) match->endTurn(*active);
+            if (currentMatch)
+            {
+                // 1. TOP BAR: Status & Round Info
+                ImGui::BeginChild("TopStatusBar", ImVec2(0, 40), true);
+                if (auto* active = currentMatch->getActivePlayer()) {
+                    if (ImGui::Button("End turn")) currentMatch->endTurn(*active);
+                    ImGui::SameLine();
+                }
+                drawTurnIndicator(*currentMatch);
+
+
+                ImGui::EndChild();
+
+                // 2. MIDDLE BATTLEFIELD: Background & Combatants
+                float middleHeight = ImGui::GetWindowHeight() - 220;
+                ImGui::BeginChild("Battlefield", ImVec2(0, middleHeight), true);
+
+                // Draw Level 1 Background PNG if loaded
+                if (bgTexture != 0)
+                {
+                    // Draw background to fill the entire battlefield area
+                    ImGui::SetCursorPos(ImVec2(0, 0));
+                    ImGui::Image((ImTextureID)(intptr_t)bgTexture, ImVec2(ImGui::GetContentRegionAvail()));
+
+                    // Reset cursor back to top-left so characters draw on top of the background
+                    ImGui::SetCursorPos(ImVec2(10, 10));
+                }
+
+                // Render all active heroes on the left side
+                const auto& matchHeroes = currentMatch->getHeroes();
+                for (size_t i = 0; i < matchHeroes.size(); ++i)
+                {
+                    if (i > 0) ImGui::SameLine();
+                    Hero* h = matchHeroes[i];
+                    if (h)
+                    {
+                        Character heroChar{
+                            h->getName(),
+                            h->getHealth(),
+                            h->getType().maxHealth,
+                            h->getMana(),
+                            h->getMaxMana(),
+                            warriorTexture // Pass the loaded Warrior texture!
+                        };
+                        drawCharacter(heroChar);
+                    }
+                }
+
+                ImGui::SameLine(400); // Space between hero and monster
+
+                // Render all monsters on the right side
+                const auto& matchMonsters = currentMatch->getMonsters();
+                for (size_t i = 0; i < matchMonsters.size(); ++i)
+                {
+                    if (i > 0) ImGui::SameLine();
+                    const auto& m = matchMonsters[i];
+                    if (m)
+                    {
+                        Character monsterChar{
+                            m->getName(),
+                            m->getHealth(),
+                            m->getHealth(),
+                            0, 0,
+                            monsterTexture // Pass the loaded Goblin texture!
+                        };
+                        drawCharacter(monsterChar);
+                    }
+                }
+
+                ImGui::EndChild();
+
+                // 3. BOTTOM TRAY: Card Hand & Deck Selection
+                ImGui::BeginChild("CardTray", ImVec2(0, 0), true);
+                ImGui::Text("Card Hand & Deck Tray (Coming soon in Card/Deck model task)");
+                ImGui::EndChild();
             }
-            drawTurnIndicator(*match);
-            drawCharacter(Character{battleHero->getName(), battleHero->getHealth(),
-                                    battleHero->getType().maxHealth, battleHero->getMana(), 10});
-            ImGui::SameLine(300);
-            for (size_t i = 0; i < battleMonsters.size(); i++) {
-                if (i > 0) ImGui::SameLine();
-                drawCharacter(Character{battleMonsters[i]->getName(), battleMonsters[i]->getHealth(), 10, 0, 0});
+            else
+            {
+                ImGui::Text("No active match found. Please start from the menu.");
             }
 
             ImGui::End();
