@@ -75,6 +75,7 @@ add_executable(${PROJECT_NAME}
         src/Monster.cpp
         src/Player.cpp
         src/Renderer.cpp
+        src/TurnIndicator.cpp
         src/Trap.cpp
         include/stb_image.h
 )
@@ -108,3 +109,15 @@ target_link_libraries(validate_data PRIVATE game_data)
 
 enable_testing()
 add_test(NAME data_validation COMMAND validate_data)
+add_executable(turn_indicator_tests
+        tests/turn_indicator_tests.cpp
+        src/Card.cpp
+        src/DungeonMaster.cpp
+        src/Hero.cpp
+        src/Match.cpp
+        src/Monster.cpp
+        src/Player.cpp
+        src/Trap.cpp
+)
+target_include_directories(turn_indicator_tests PRIVATE include)
+add_test(NAME turn_indicator COMMAND turn_indicator_tests)
