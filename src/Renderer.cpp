@@ -38,7 +38,7 @@ bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_wid
     return true;
 }
 
-void drawCharacter(const Character& c)
+bool drawCharacter(const Character& c)
 {
     ImGui::BeginChild(c.name.c_str(), ImVec2(240, 360), false);
 
@@ -68,10 +68,16 @@ void drawCharacter(const Character& c)
     }
 
     ImGui::EndChild();
+    return ImGui::IsItemClicked();
 }
-void drawCard (const CardView& c, bool playable)
+
+bool drawCard (const CardView& c, bool playable, bool selected)
 {
     ImGui::BeginDisabled(!playable);
+    
+    if (selected)
+        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 220, 90, 255));
+
     ImGui::BeginChild(c.name.c_str(), ImVec2(130, 110), true);
 
     ImGui::Text("%s", c.name.c_str());
@@ -85,5 +91,11 @@ void drawCard (const CardView& c, bool playable)
     }
 
     ImGui::EndChild();
+
+    bool clicked = ImGui::IsItemClicked();
+    if (selected)
+        ImGui::PopStyleColor();
+
     ImGui::EndDisabled();
+    return clicked;
 }

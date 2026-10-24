@@ -25,8 +25,8 @@ struct CardView {
 enum class Screen { Start, Battle };
 
 bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
-void drawCharacter(const Character& c);
-void drawCard(const CardView& c, bool playable);
+bool drawCharacter(const Character& c);
+bool drawCard(const CardView& c, bool playable, bool selected);
 
 class Renderer {
 };
