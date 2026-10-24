@@ -13,6 +13,12 @@ endif()
 
 # External Libraries: GLFW, GLM, nlohmann/json
 
+# Only build the GLFW library itself (no docs/tests/examples), and use X11 on Linux
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
         glfw
         URL https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz
@@ -36,8 +42,7 @@ FetchContent_MakeAvailable(json)
 #IMGUI //ss
 FetchContent_Declare(
         imgui
-        GIT_REPOSITORY https://github.com/ocornut/imgui.git
-        GIT_TAG        v1.91.5
+        URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5.tar.gz
 )
 FetchContent_MakeAvailable(imgui)
 
@@ -77,7 +82,11 @@ add_executable(${PROJECT_NAME}
         src/Renderer.cpp
         src/TurnIndicator.cpp
         src/Trap.cpp
-        include/stb_image.h
+)
+
+# Lets the game find assets/ no matter which folder it is started from
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+        DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -121,3 +130,19 @@ add_executable(turn_indicator_tests
 )
 target_include_directories(turn_indicator_tests PRIVATE include)
 add_test(NAME turn_indicator COMMAND turn_indicator_tests)
+
+# Kagan's model tests (were in tests/ but never built)
+add_executable(model_tests
+        tests/model_tests.cpp
+        src/Card.cpp
+        src/DungeonMaster.cpp
+        src/Hero.cpp
+        src/Match.cpp
+        src/Monster.cpp
+        src/Player.cpp
+        src/Trap.cpp
+)
+target_include_directories(model_tests PRIVATE include)
+add_test(NAME model COMMAND model_tests)
+# model_tests uses assert(), which Release builds switch off - keep it on for this target
+target_compile_options(model_tests PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)

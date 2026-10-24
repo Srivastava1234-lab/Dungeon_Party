@@ -3,6 +3,7 @@
 #include "DMCard.h"
 #include "Hero.h"
 #include "DungeonMaster.h"
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -15,7 +16,7 @@ Card::Card(const std::string& n, int cost)
 
 HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v)        : Card(std::move(n), c), effect(e), value(v){
         if (v < 0){
-            throw std::invalid_argument("negavtive effect value");
+            throw std::invalid_argument("negative effect value");
         }
     }
 
@@ -69,8 +70,10 @@ int HeroCard::getValue() const {
     return value;
 }
 
+DMEffect DMCard::getEffect() const {
+    return effect;
+}
 
-
-
-
-
+int DMCard::getValue() const {
+    return value;
+}

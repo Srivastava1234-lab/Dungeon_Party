@@ -4,7 +4,8 @@
 #include <utility>
 Monster::Monster(std::string n, int h, bool b, int l)
     : name(std::move(n)),
-    health(h), 
+    health(h),
+    maxHealth(h),
     boss(b), 
     level(l) {
     if (h <= 0 || l <= 0){
@@ -32,6 +33,10 @@ const std::string& Monster::getName() const {
 
 int Monster::getHealth() const {
     return health;
+}
+
+int Monster::getMaxHealth() const {
+    return maxHealth;
 }
 
 bool Monster::isAlive() const {

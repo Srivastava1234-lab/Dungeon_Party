@@ -16,3 +16,6 @@ bin/
 *.pch
 *.exe
 *.out
+
+#ImGui writes this at runtime
+imgui.ini

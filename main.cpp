@@ -1,5 +1,10 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <exception>
+#include <filesystem>
+#include <map>
+#include <memory>
+#include <string>
 #include <vector>
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -12,6 +17,18 @@
 #include "Monster.h"
 #include "DungeonMaster.h"
 #include "TurnIndicator.h"
+
+// Asset paths in the data files are relative to the project folder (e.g. "assets/Warrior_Artwork.png").
+// CMake passes the absolute project folder in, so the game finds its files no matter which
+// folder it is started from (VS Code, CLion and Visual Studio all start it in the build folder).
+static std::string projectPath(const std::string& relative)
+{
+#ifdef DUNGEON_PARTY_PROJECT_DIR
+    return (std::filesystem::path(DUNGEON_PARTY_PROJECT_DIR) / relative).string();
+#else
+    return relative;
+#endif
+}
 
 int main()
 {
@@ -38,19 +55,23 @@ int main()
         return -1;
     }
     glfwMakeContextCurrent(window);
+    glfwSwapInterval(1); // vsync: without it the loop runs at 100% GPU/CPU
+
+    // Initialize GLAD (load OpenGL function pointers) BEFORE anything uses OpenGL
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+    {
+        std::cerr << "Failed to initialize GLAD\n";
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
 
     // Create and connect ImGui to window
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr; // don't write imgui.ini into whatever folder we were started in
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
-
-    // Initialize GLAD (load OpenGL function pointers)
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-    {
-        std::cerr << "Failed to initialize GLAD\n";
-        return -1;
-    }
 
     std::cout << "OpenGL loaded: " << glGetString(GL_VERSION) << "\n";
 
@@ -58,25 +79,47 @@ int main()
     Screen screen = Screen::Start;
     std::unique_ptr<Match> currentMatch = nullptr;
 
-    Character hero{"Hero", 20, 30, 4, 10};
-    std::vector<Character> monsters = {
-        {"Goblin 1", 10, 10, 5, 5},
-        {"Goblin 2", 7, 10, 3, 5},
-        {"Goblin 3", 10, 10, 5, 5}
-    };
+    // Initialize GameData loading from the data/ folder.
+    // If a data file is missing or wrong we show the error in the window instead of crashing.
+    std::unique_ptr<GameData> gameData;
+    std::string errorMessage;
+    try
+    {
+        gameData = std::make_unique<GameData>(GameData::defaultDataDirectory());
+    }
+    catch (const std::exception& e)
+    {
+        errorMessage = std::string("Could not load game data:\n") + e.what();
+        std::cerr << errorMessage << "\n";
+    }
 
-    // Initialize GameData loading from the data/ folder
-    GameData gameData(GameData::defaultDataDirectory());
-
-    // Load PNG Textures at startup
-    GLuint warriorTexture = 0;
-    GLuint monsterTexture = 0;
+    // Load every PNG once at startup. Heroes are keyed by hero id, monsters by name
+    // (those are the values the Hero/Monster objects carry).
+    std::map<std::string, GLuint> heroTextures;
+    std::map<std::string, GLuint> monsterTextures;
     GLuint bgTexture = 0;
-    int width, height;
+    int width = 0, height = 0;
+    if (gameData)
+    {
+        for (const auto& heroDef : gameData->getHeroes())
+        {
+            GLuint tex = 0;
+            if (!heroDef.image.empty() && LoadTextureFromFile(projectPath(heroDef.image).c_str(), &tex, &width, &height))
+                heroTextures[heroDef.id] = tex;
+        }
+        for (const auto& monsterDef : gameData->getMonsters())
+        {
+            GLuint tex = 0;
+            if (!monsterDef.image.empty() && LoadTextureFromFile(projectPath(monsterDef.image).c_str(), &tex, &width, &height))
+                monsterTextures[monsterDef.name] = tex;
+        }
+    }
+    LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &width, &height);
 
-    LoadTextureFromFile("assets/Warrior_Artwork.png", &warriorTexture, &width, &height);
-    LoadTextureFromFile("assets/Monster_Artwork.png", &monsterTexture, &width, &height);
-    LoadTextureFromFile("assets/Level_1_Artwork.png", &bgTexture, &width, &height);
+    auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) -> GLuint {
+        auto it = textures.find(key);
+        return it == textures.end() ? 0 : it->second;
+    };
 
     // Main loop clear screen to a color until window closed
     while (!glfwWindowShouldClose(window))
@@ -90,9 +133,6 @@ int main()
 
         if (screen == Screen::Start)
         {
-            GLuint warriorTexture = 0;
-            int wWidth, wHeight;
-            LoadTextureFromFile("assets/warrior.png", &warriorTexture, &wWidth, &wHeight);
             ImGuiIO &io = ImGui::GetIO();
             ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                     ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -102,41 +142,51 @@ int main()
                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
             ImGui::SetWindowFontScale(2.0f);
             ImGui::Text("DUNGEON PARTY");
-            if (ImGui::Button("Start match", ImVec2(-1, 70)))
+            if (!errorMessage.empty())
             {
-                // 1. Load Level 1 definition from JSON using GameData
-                LevelDefinition lvl1 = gameData.loadLevel(1);
-
-                // 2. Initialize the Match object using level max rounds
-                currentMatch = std::make_unique<Match>("match_1", lvl1.maxRounds);
-
-                // 3. Load the default Hero for Level 1 (e.g., Warrior)
-                if (!lvl1.defaultHeroes.empty())
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::TextWrapped("%s", errorMessage.c_str());
+            }
+            else if (ImGui::Button("Start match", ImVec2(-1, 70)))
+            {
+                try
                 {
-                    const auto& heroDef = gameData.getHero(lvl1.defaultHeroes[0]);
-                    auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
+                    // 1. Load Level 1 definition from JSON using GameData
+                    LevelDefinition lvl1 = gameData->loadLevel(1);
 
-                    currentMatch->addPlayer(std::move(loadedHero));
-                }
+                    // 2. Initialize the Match object using level max rounds
+                    auto match = std::make_unique<Match>("match_1", lvl1.maxRounds);
 
-                // 3.5. Create and add the Dungeon Master (Required by Match rules!)
-                auto dungeonMaster = std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10);
-                currentMatch->addPlayer(std::move(dungeonMaster));
-
-                // 4. Load Level 1 Monsters dynamically from JSON
-                for (const auto& monsterEntry : lvl1.monsters)
-                {
-                    const auto& monsterDef = gameData.getMonster(monsterEntry.monsterId);
-                    for (int i = 0; i < monsterEntry.count; ++i)
+                    // 3. Load the default Heroes for Level 1 (e.g., Warrior)
+                    int heroCount = 0;
+                    for (const auto& heroId : lvl1.defaultHeroes)
                     {
-                        auto monster = std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss);
-                        currentMatch->addMonster(std::move(monster));
+                        const auto& heroDef = gameData->getHero(heroId);
+                        match->addPlayer(std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana));
+                        ++heroCount;
                     }
-                }
 
-                // 5. Start the match and switch to the battle screen
-                currentMatch->start();
-                screen = Screen::Battle;
+                    // 3.5. Create and add the Dungeon Master (Required by Match rules!)
+                    match->addPlayer(std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10));
+
+                    // 4. Load Level 1 Monsters from JSON: countPerHero x number of heroes (see data/README.md)
+                    for (const auto& monsterEntry : lvl1.monsters)
+                    {
+                        const auto& monsterDef = gameData->getMonster(monsterEntry.monsterId);
+                        for (int i = 0; i < monsterEntry.countPerHero * heroCount; ++i)
+                            match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
+                    }
+
+                    // 5. Start the match and switch to the battle screen
+                    match->start();
+                    currentMatch = std::move(match);
+                    screen = Screen::Battle;
+                }
+                catch (const std::exception& e)
+                {
+                    errorMessage = std::string("Could not start the match:\n") + e.what();
+                    std::cerr << errorMessage << "\n";
+                }
             }
             ImGui::End();
         }
@@ -189,7 +239,7 @@ int main()
                             h->getType().maxHealth,
                             h->getMana(),
                             h->getMaxMana(),
-                            warriorTexture // Pass the loaded Warrior texture!
+                            textureOr0(heroTextures, h->getPlayerId())
                         };
                         drawCharacter(heroChar);
                     }
@@ -208,9 +258,9 @@ int main()
                         Character monsterChar{
                             m->getName(),
                             m->getHealth(),
-                            m->getHealth(),
+                            m->getMaxHealth(),
                             0, 0,
-                            monsterTexture // Pass the loaded Goblin texture!
+                            textureOr0(monsterTextures, m->getName())
                         };
                         drawCharacter(monsterChar);
                     }

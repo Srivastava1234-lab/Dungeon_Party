@@ -1,5 +1,7 @@
 #include "Renderer.h"
 #include "imgui.h"
+#include <cstdint>
+#include <cstdio>
 #include <iostream>
 
 #define STB_IMAGE_IMPLEMENTATION
