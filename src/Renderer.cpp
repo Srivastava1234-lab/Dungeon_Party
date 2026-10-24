@@ -69,3 +69,21 @@ void drawCharacter(const Character& c)
 
     ImGui::EndChild();
 }
+void drawCard (const CardView& c, bool playable)
+{
+    ImGui::BeginDisabled(!playable);
+    ImGui::BeginChild(c.name.c_str(), ImVec2(130, 110), true);
+
+    ImGui::Text("%s", c.name.c_str());
+    ImGui::Text("Cost: %d", c.manaCost);
+
+    switch (c.effect)
+    {
+        case HeroEffect::ATTACK: ImGui::Text("Deal %d damage", c.value); break;
+        case HeroEffect::HEAL:   ImGui::Text("+%d HP", c.value);        break;
+        default:                 ImGui::Text("Effect %d", c.value);      break;
+    }
+
+    ImGui::EndChild();
+    ImGui::EndDisabled();
+}

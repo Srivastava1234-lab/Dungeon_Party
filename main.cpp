@@ -63,6 +63,11 @@ int main()
         {"Goblin 2", 7, 10, 3, 5},
         {"Goblin 3", 10, 10, 5, 5}
     };
+    std::vector<CardView> hand = {
+    {"Strike",     1, HeroEffect::ATTACK, 5},
+    {"Heavy blow", 5, HeroEffect::ATTACK, 14},
+    {"Heal",  2, HeroEffect::HEAL, 6}
+};
 
     // Initialize GameData loading from the data/ folder
     GameData gameData(GameData::defaultDataDirectory());
@@ -213,9 +218,19 @@ int main()
 
                 ImGui::EndChild();
 
+                // Current mana of the active hero, used to decide which cards can be played
+                int heroMana = 0;
+                if (!matchHeroes.empty() && matchHeroes[0])
+                    heroMana = matchHeroes[0]->getMana();
+
                 // 3. BOTTOM TRAY: Card Hand & Deck Selection
                 ImGui::BeginChild("CardTray", ImVec2(0, 0), true);
-                ImGui::Text("Card Hand & Deck Tray (Coming soon in Card/Deck model task)");
+
+                for (size_t i = 0; i < hand.size();i++){
+                    if (i > 0) ImGui::SameLine();
+                    drawCard(hand[i], heroMana >= hand[i].manaCost);
+                }
+                
                 ImGui::EndChild();
             }
             else
