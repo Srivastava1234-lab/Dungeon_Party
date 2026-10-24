@@ -3,13 +3,17 @@
 
 // GameData (SCRUM-5)
 // ------------------
-// Loads the game data from the data/ folder: cards, heroes, monsters and levels.
-// The JSON format of every file is described in data/README.md.
+// Loads the configuration data from the data/ folder: cards, heroes, monsters,
+// match rules and levels. The JSON format of every file is described in data/README.md.
+//
+// GameData only LOADS and CHECKS configuration values. It does not run the game loop and
+// does not hold the state of a running match (round, turn, health, ...) - that is the job
+// of the game logic (Match / turn manager).
 //
 // This header only DESCRIBES the data. It does not create Card, Hero or Monster objects:
-//   - Taegan's card/deck model turns a CardDefinition into a HeroCard or DMCard.
-//   - Kagan's match setup turns HeroDefinition, MonsterDefinition and LevelDefinition
-//     into Hero, Monster and Match objects.
+//   - the card/deck model (SCRUM-15) turns a CardDefinition into a HeroCard or DMCard.
+//   - the match setup (SCRUM-6) turns HeroDefinition, MonsterDefinition, LevelDefinition
+//     and RulesDefinition into Hero, Monster and Match objects.
 //
 // The JSON library (nlohmann/json) is only used inside GameData.cpp, so files that
 // include this header do not need to know about JSON at all.
@@ -47,7 +51,7 @@ struct CardDefinition {
 
 // ===================== heroes.json =====================
 
-// One line of a starting deck, e.g. { "card": "strike", "count": 10 }
+// One line of a starting deck, e.g. { "card": "strike", "count": 5 }
 struct DeckEntry {
     std::string cardId;  // id of a HEROES card in cards.json
     int count = 0;       // number of copies of this card
@@ -64,9 +68,10 @@ struct HeroDefinition {
     // The translation happens in GameData.cpp. Do not write "HEALER" in the data files.
     HeroClass heroClass = HeroClass::WARRIOR;
 
-    int maxHealth = 0;   // health at the start of the match
-    int maxMana = 0;     // mana refilled every round
-    std::vector<DeckEntry> startingDeck;
+    int maxHealth = 0;   // the hero starts the match with full health
+    int maxMana = 0;     // the hero starts with full mana; mana is refilled every round
+    std::string image;   // picture file, relative to the project folder (e.g. "assets/Warrior_Artwork.png")
+    std::vector<DeckEntry> startingDeck; // may be empty: an empty deck is a valid state
     bool temporary = true;
 
     // Kagan's Hero constructor expects a HeroType { heroClass, maxHealth }.
@@ -80,16 +85,23 @@ struct MonsterDefinition {
     std::string name;     // e.g. "Goblin"
     int maxHealth = 0;    // health at the start of the match
     int attackPower = 0;  // UML Monster.attackPower (not a member of Kagan's Monster class yet)
-    bool boss = false;    // UML Monster.boss (Boss/Monster naming is still open in the team)
+
+    // UML Monster.boss: true = this monster is a final boss MONSTER.
+    // This is NOT the Dungeon Master role, even though the team sometimes calls the DM "Boss".
+    bool boss = false;
+
+    std::string image;    // picture file, relative to the project folder (e.g. "assets/Monster_Artwork.png")
     bool temporary = true;
 };
 
 // ===================== levels/level_N.json =====================
 
-// One line of a level's monster list, e.g. { "monster": "goblin", "count": 1 }
+// One line of a level's monster list, e.g. { "monster": "goblin", "countPerHero": 1 }
+// There is no fixed total: the match setup multiplies countPerHero by the number of
+// hero players. A level has no grid, tiles or positions.
 struct LevelMonsterEntry {
-    std::string monsterId; // id in monsters.json
-    int count = 0;         // how many of this monster appear
+    std::string monsterId;  // id in monsters.json
+    int countPerHero = 0;   // how many of this monster appear PER HERO PLAYER
 };
 
 struct LevelDefinition {
@@ -101,12 +113,26 @@ struct LevelDefinition {
     bool temporary = true;
 };
 
+// ===================== rules.json =====================
+
+// Match rules. These are configuration values only: GameData does not apply them.
+// The game logic (turn manager, deck, mana, timer) reads them in its own tasks.
+struct RulesDefinition {
+    int maxCardsPlayedPerTurn = 0;       // a player may play at most this many cards per turn
+    int cardsDrawnPerTurn = 0;           // cards drawn at the start of each turn
+    bool shuffleDeckAtMatchStart = true; // shuffle every deck once when the match starts
+    bool refillManaEachRound = true;     // mana goes back to maxMana every round
+    int maxManaIncreasePerRound = 0;     // 0 = maxMana never grows (Sprint 1)
+    int heroTurnTimeLimitSeconds = 0;    // hero turn timer (config only; timer comes in Sprint 2)
+    bool temporary = true;
+};
+
 // ===================== The loader =====================
 
 class GameData {
 public:
-    // Loads cards.json, heroes.json and monsters.json from 'dataDirectory' and checks them.
-    // Throws GameDataError if a file is missing or contains a mistake.
+    // Loads cards.json, heroes.json, monsters.json and rules.json from 'dataDirectory'
+    // and checks them. Throws GameDataError if a file is missing or contains a mistake.
     explicit GameData(const std::string& dataDirectory);
 
     // The data folder set by CMake (DUNGEON_PARTY_DATA_DIR), or "data" if CMake did not set it.
@@ -126,6 +152,9 @@ public:
     const std::vector<HeroDefinition>& getHeroes() const;
     const std::vector<MonsterDefinition>& getMonsters() const;
 
+    // The match rules from rules.json.
+    const RulesDefinition& getRules() const;
+
     const std::string& getDataDirectory() const;
 
 private:
@@ -133,11 +162,13 @@ private:
     std::vector<CardDefinition> cards;
     std::vector<HeroDefinition> heroes;
     std::vector<MonsterDefinition> monsters;
+    RulesDefinition rules;
 
     // Called by the constructor in this order (heroes refer to cards, so cards come first).
     void loadCards();
     void loadHeroes();
     void loadMonsters();
+    void loadRules();
 
     // Like getCard/getHero/getMonster, but return nullptr instead of throwing.
     // Used to check references (deck -> card, level -> hero/monster).
