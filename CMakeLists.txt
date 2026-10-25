@@ -114,3 +114,18 @@ target_link_libraries(validate_data PRIVATE game_data)
 
 enable_testing()
 add_test(NAME data_validation COMMAND validate_data)
+# SCRUM-21: current combat behavior; DM attack rules remain outside this suite.
+add_executable(combat_tests
+        tests/combat_tests.cpp
+        src/Card.cpp
+        src/DungeonMaster.cpp
+        src/Hero.cpp
+        src/Match.cpp
+        src/Monster.cpp
+        src/Player.cpp
+        src/Trap.cpp
+)
+target_include_directories(combat_tests PRIVATE include)
+foreach(case_name attack_damage invalid_targets monster_damage victory round_limit)
+    add_test(NAME combat_${case_name} COMMAND combat_tests ${case_name})
+endforeach()
