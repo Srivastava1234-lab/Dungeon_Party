@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+
 Match::Match(std::string id, int limit)
     : matchId(std::move(id)), maxRounds(limit) {
     if (maxRounds <= 0 || matchId.empty()) throw std::invalid_argument("Invalid match setup");
 }
+
 void Match::addPlayer(std::unique_ptr<Player> p) {
     if (started || !p) throw std::logic_error("Cannot add player");
     for (const auto& other : players)
@@ -16,10 +18,12 @@ void Match::addPlayer(std::unique_ptr<Player> p) {
         throw std::invalid_argument("Unsupported player role");
     players.push_back(std::move(p));
 }
+
 void Match::addMonster(std::unique_ptr<Monster> m) {
     if (started || !m) throw std::logic_error("Configure monsters before start");
     monsters.push_back(std::move(m));
 }
+
 void Match::start() {
     if (started) throw std::logic_error("Match already started");
     heroes.clear(); dm = nullptr;
@@ -31,18 +35,21 @@ void Match::start() {
         }
     }
     if (heroes.empty() || heroes.size() > 6 || !dm || monsters.empty()) {
-    throw std::logic_error("Need 1-6 heroes, exactly one DM and at least one monster");
+        throw std::logic_error("Need 1-6 heroes, exactly one DM and at least one monster");
     }
     started = true; round = 1; activeHero = 0; phase = Phase::HERO_TURN;
     beginTurn(*heroes.front());
 }
+
 void Match::beginTurn(Player& p) { p.refillMana(); p.cardsPlayedThisTurn = 0; p.drawCard(); }
+
 Player* Match::getActivePlayer() const {
     if (!started || isFinished()) return nullptr;
     if (phase == Phase::HERO_TURN) return heroes.at(activeHero);
     if (phase == Phase::DM_TURN) return dm;
     return nullptr;
 }
+
 CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t) const {
     auto fail = [](const char* s){ return CheckResult{false, std::string(s)}; };
     if (!started || isFinished()) return fail("Match is not active");
@@ -62,6 +69,7 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     for (const auto& m : monsters) if (m.get() == &t && m->isAlive()) return {true, std::nullopt};
     return fail("Attack requires a living monster in this match");
 }
+
 void Match::apply(const Card& c, Targetable& t) {
     auto* p = getActivePlayer();
     if (!p) throw std::logic_error("No active player");
@@ -69,8 +77,9 @@ void Match::apply(const Card& c, Targetable& t) {
     if (!check.valid) throw std::invalid_argument(check.reason.value());
     p->playCard(c, t); checkWinner();
 }
+
 void Match::checkWinner() {
-    if (std::none_of(heroes.begin(), heroes.end(), [](const auto* h){return h->isAlive();})) {
+    if (std::none_of(heroes.begin(), heroes.end(), [](const auto* h){ return h->isAlive(); })) {
         winner = Side::DUNGEON_MASTER; return;
     }
     bool hadBoss = false, livingBoss = false, livingMonster = false;
@@ -81,6 +90,7 @@ void Match::checkWinner() {
     }
     if ((hadBoss && !livingBoss) || !livingMonster) winner = Side::HEROES;
 }
+
 void Match::endTurn(Player& p) {
     if (getActivePlayer() != &p) throw std::invalid_argument("Not the active player");
     if (phase == Phase::HERO_TURN) {

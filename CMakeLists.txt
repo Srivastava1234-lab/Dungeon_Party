@@ -13,6 +13,12 @@ endif()
 
 # External Libraries: GLFW, GLM, nlohmann/json
 
+# Only build the GLFW library itself (no docs/tests/examples), and use X11 on Linux
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
         glfw
         URL https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz
