@@ -177,7 +177,7 @@ int main()
 
                         // TEMPORARY until task 15 fills the deck from heroes.json
                         for (int i = 0; i < 10; ++i)
-                            loadedHero->addToDeck(std::make_unique<HeroCard>(0, "Strike", HeroEffect::ATTACK, 5));
+                            loadedHero->addToDeck(std::make_unique<HeroCard>("Strike", 1, HeroEffect::ATTACK, 5));
 
                         match->addPlayer(std::move(loadedHero));
                         ++heroCount;
