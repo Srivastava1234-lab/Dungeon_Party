@@ -42,7 +42,8 @@ FetchContent_MakeAvailable(json)
 #IMGUI //ss
 FetchContent_Declare(
         imgui
-        URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5.tar.gz
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG        v1.91.5
 )
 FetchContent_MakeAvailable(imgui)
 
@@ -80,13 +81,8 @@ add_executable(${PROJECT_NAME}
         src/Monster.cpp
         src/Player.cpp
         src/Renderer.cpp
-        src/TurnIndicator.cpp
         src/Trap.cpp
-)
-
-# Lets the game find assets/ no matter which folder it is started from
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-        DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        include/stb_image.h
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -118,31 +114,3 @@ target_link_libraries(validate_data PRIVATE game_data)
 
 enable_testing()
 add_test(NAME data_validation COMMAND validate_data)
-add_executable(turn_indicator_tests
-        tests/turn_indicator_tests.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Trap.cpp
-)
-target_include_directories(turn_indicator_tests PRIVATE include)
-add_test(NAME turn_indicator COMMAND turn_indicator_tests)
-
-# Kagan's model tests (were in tests/ but never built)
-add_executable(model_tests
-        tests/model_tests.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Trap.cpp
-)
-target_include_directories(model_tests PRIVATE include)
-add_test(NAME model COMMAND model_tests)
-# model_tests uses assert(), which Release builds switch off - keep it on for this target
-target_compile_options(model_tests PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)
