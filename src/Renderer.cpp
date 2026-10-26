@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "Match.h"
 #include "imgui.h"
 #include <cstdint>
 #include <cstdio>
@@ -70,4 +71,9 @@ void drawCharacter(const Character& c)
     }
 
     ImGui::EndChild();
+}
+
+void drawTurnIndicator(const Match& match)
+{
+    ImGui::Text("Active Turn / Round: %d", match.getRound());
 }

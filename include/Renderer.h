@@ -4,6 +4,8 @@
 #include <string>
 #include <glad/glad.h>
 
+class Match;
+
 struct Character {
     std::string name;
     int health;
@@ -17,6 +19,7 @@ enum class Screen { Start, Battle };
 
 bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 void drawCharacter(const Character& c);
+void drawTurnIndicator(const Match& match);
 
 class Renderer {
 };
