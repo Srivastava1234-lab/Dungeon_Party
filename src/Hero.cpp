@@ -27,7 +27,7 @@ void Hero::takeDamage(int amount){
         return;
     }
 
-    health -= std::max(0, health-amount);
+    health = std::max(0, health-amount);
 }
 
 void Hero::heal(int amount){

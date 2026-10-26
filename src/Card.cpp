@@ -9,11 +9,13 @@
 Card::Card(const std::string& n, int cost)
     : name(n),
     manaCost(std::max(0, cost)){
-        if (cost < 0)
-            throw std::invalid_argument("negative mana cost");
+        if (cost < 0){
+             throw std::invalid_argument("negative mana cost");
+        } 
     }
 
-HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v)        : Card(std::move(n), c), effect(e), value(v){
+HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v) 
+    : Card(std::move(n), c), effect(e), value(v){
         if (v < 0){
             throw std::invalid_argument("negavtive effect value");
         }
@@ -49,8 +51,22 @@ bool DMCard::canBePlayedBy(const Player& p) const {
     return dynamic_cast<const DungeonMaster*>(&p) != nullptr;
 }
 
-void DMCard::applyEffect(Targetable&) const{
-    throw std::logic_error("DM effect is not done yet");
+void DMCard::applyEffect(Targetable& target) const{
+     if (effect == DMEffect::ATTACK) {
+        Hero* hero = dynamic_cast<Hero*>(&target);
+
+        if (hero == nullptr) {
+            throw std::invalid_argument("Monster attacks must target a hero");
+        }
+
+        if (!hero->isAlive()) {
+            throw std::invalid_argument("Cannot attack a defeated hero");
+        }
+
+        hero->takeDamage(value);
+    } else {
+        throw std::logic_error("This DM effect is not implemented yet");
+    }
 }
 
 const std::string& Card::getName() const{
@@ -67,6 +83,10 @@ HeroEffect HeroCard::getEffect() const {
 
 int HeroCard::getValue() const {
     return value;
+}
+
+DMEffect DMCard::getEffect() const {
+    return effect;
 }
 
 

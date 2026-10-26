@@ -1,6 +1,6 @@
 #include "Match.h"
 #include "HeroCard.h"
-
+#include "DMCard.h"
 #include <stdexcept>
 #include <utility>
 
@@ -253,7 +253,28 @@ void Match::endTurn(Player& player) {
     } else {
         phase = Phase::MONSTER_ACTIONS;
 
-        // Monster actions will be implemented later.
+        // Perform the attacks in the order the DM selected them.
+        for (std::size_t i = 0; i < monsterActions.size(); i++) {
+            MonsterAction& action = monsterActions[i];
+
+            // Skip attacks involving a defeated monster or hero.
+            if (!action.monster->isAlive() || !action.target->isAlive()) {
+                continue;
+            }
+
+            action.monster->attack(*action.card, *action.target);
+
+            // Stop immediately if the attack ends the match.
+            checkWinner();
+
+            if (isFinished()) {
+                break;
+            }
+        }
+
+        // These orders must not run again next round.
+        monsterActions.clear();
+
         checkWinner();
 
         if (isFinished()) {
@@ -297,4 +318,93 @@ const std::string& Match::getMatchId() const {
 
 std::optional<Side> Match::getWinner() const {
     return winner;
+}
+
+void Match::queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target) {
+    // Only the active DM can give monster orders.
+    if (!started || isFinished()) {
+        throw std::logic_error("Match is not active");
+    }
+
+    if (phase != Phase::DM_TURN || getActivePlayer() != &player) {
+        throw std::invalid_argument("It is not this DM's turn");
+    }
+
+    // The card must be in the DM's hand.
+    bool cardInHand = false;
+
+    for (std::size_t i = 0; i < player.hand.size(); i++) {
+        if (player.hand[i].get() == &card) {
+            cardInHand = true;
+            break;
+        }
+    }
+
+    if (!cardInHand) {
+        throw std::invalid_argument("Card is not in the DM's hand");
+    }
+
+    // Only DM attack cards can create an attack order.
+    const DMCard* dmCard = dynamic_cast<const DMCard*>(&card);
+
+    if (dmCard == nullptr) {
+        throw std::invalid_argument("A DM card is required");
+    }
+
+    if (dmCard->getEffect() != DMEffect::ATTACK) {
+        throw std::invalid_argument("An attack card is required");
+    }
+
+    if (!card.canBePlayedBy(player)) {
+        throw std::invalid_argument("Wrong card for role");
+    }
+
+    if (!player.canPay(card.getManaCost())) {
+        throw std::invalid_argument("Not enough mana");
+    }
+
+    if (player.cardsPlayedThisTurn >= 3) {
+        throw std::invalid_argument("Three-card turn limit reached");
+    }
+
+    // The selected monster must belong to this match.
+    bool monsterInMatch = false;
+
+    for (int i = 0; i < monsters.size(); i++) {
+        if (monsters[i].get() == &monster) {
+            monsterInMatch = true;
+            break;
+        }
+    }
+
+    if (!monsterInMatch || !monster.isAlive()) {
+        throw std::invalid_argument("Select a living monster in this match");
+    }
+
+    // The target must be a living hero in this match.
+    bool heroInMatch = false;
+
+    for (int i = 0; i < heroes.size(); i++) {
+        if (heroes[i] == &target) {
+            heroInMatch = true;
+            break;
+        }
+    }
+
+    if (!heroInMatch || !target.isAlive()) {
+        throw std::invalid_argument("Select a living hero in this match");
+    }
+
+    // Store the damage without dealing damage yet.
+    MonsterAction action;
+    action.monster = &monster;
+    action.card = &card;
+    action.target = &target;
+
+    monsterActions.push_back(action);
+
+    // Pay for the card 
+    player.mana -= card.getManaCost();
+    player.cardsPlayedThisTurn++;
+    player.discard(card);
 }
