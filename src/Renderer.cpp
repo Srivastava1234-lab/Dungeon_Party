@@ -41,7 +41,7 @@ bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_wid
     return true;
 }
 
-void drawCharacter(const Character& c)
+bool drawCharacter(const Character& c)
 {
     ImGui::BeginChild(c.name.c_str(), ImVec2(240, 360), false);
 
@@ -71,6 +71,36 @@ void drawCharacter(const Character& c)
     }
 
     ImGui::EndChild();
+    return ImGui::IsItemClicked();
+}
+
+bool drawCard (const CardView& c, bool playable, bool selected)
+{
+    ImGui::BeginDisabled(!playable);
+
+    if (selected)
+        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 220, 90, 255));
+
+    ImGui::BeginChild(c.name.c_str(), ImVec2(130, 110), true);
+
+    ImGui::Text("%s", c.name.c_str());
+    ImGui::Text("Cost: %d", c.manaCost);
+
+    switch (c.effect)
+    {
+        case HeroEffect::ATTACK: ImGui::Text("Deal %d damage", c.value); break;
+        case HeroEffect::HEAL:   ImGui::Text("+%d HP", c.value);        break;
+        default:                 ImGui::Text("Effect %d", c.value);      break;
+    }
+
+    ImGui::EndChild();
+
+    bool clicked = ImGui::IsItemClicked();
+    if (selected)
+        ImGui::PopStyleColor();
+
+    ImGui::EndDisabled();
+    return clicked;
 }
 
 void drawTurnIndicator(const Match& match)

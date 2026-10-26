@@ -14,6 +14,7 @@
 #include "GameData.h"
 #include "Match.h"
 #include "Hero.h"
+#include "HeroCard.h"
 #include "Monster.h"
 #include "DungeonMaster.h"
 #include "TurnIndicator.h"
@@ -92,6 +93,13 @@ int main()
         errorMessage = std::string("Could not load game data:\n") + e.what();
         std::cerr << errorMessage << "\n";
     }
+// the following lines can be removed once we do the second merge *****
+    std::vector<CardView> hand = {
+    {"Strike",     1, HeroEffect::ATTACK, 5},
+    {"Heavy blow", 5, HeroEffect::ATTACK, 14},
+    {"Heal",  2, HeroEffect::HEAL, 6}
+};
+// until here                                                    *****
 
     // Load every PNG once at startup. Heroes are keyed by hero id, monsters by name
     // (those are the values the Hero/Monster objects carry).
@@ -121,6 +129,8 @@ int main()
         return it == textures.end() ? 0 : it->second;
     };
 
+
+    int selectedCard = -1; // nothing is selected
     // Main loop clear screen to a color until window closed
     while (!glfwWindowShouldClose(window))
     {
@@ -131,6 +141,7 @@ int main()
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // Start match button
         if (screen == Screen::Start)
         {
             ImGuiIO &io = ImGui::GetIO();
@@ -162,7 +173,13 @@ int main()
                     for (const auto& heroId : lvl1.defaultHeroes)
                     {
                         const auto& heroDef = gameData->getHero(heroId);
-                        match->addPlayer(std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana));
+                        auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
+
+                        // TEMPORARY until task 15 fills the deck from heroes.json
+                        for (int i = 0; i < 10; ++i)
+                            loadedHero->addToDeck(std::make_unique<HeroCard>(0, "Strike", HeroEffect::ATTACK, 5));
+
+                        match->addPlayer(std::move(loadedHero));
                         ++heroCount;
                     }
 
@@ -225,6 +242,7 @@ int main()
                     ImGui::SetCursorPos(ImVec2(10, 10));
                 }
 
+                Player* active = currentMatch->getActivePlayer();
                 // Render all active heroes on the left side
                 const auto& matchHeroes = currentMatch->getHeroes();
                 for (size_t i = 0; i < matchHeroes.size(); ++i)
@@ -249,28 +267,71 @@ int main()
 
                 // Render all monsters on the right side
                 const auto& matchMonsters = currentMatch->getMonsters();
+                int drawn = 0; // to count how many monsters are drawned
                 for (size_t i = 0; i < matchMonsters.size(); ++i)
                 {
-                    if (i > 0) ImGui::SameLine();
                     const auto& m = matchMonsters[i];
-                    if (m)
+                    if (!m || !m->isAlive()) continue; // to skip the dead monsters
+
+                    if (drawn > 0) ImGui::SameLine();
+                    drawn++;
+
+                    Character monsterChar{
+                        m->getName(),
+                        m->getHealth(),
+                        m->getMaxHealth(),
+                        0, 0,
+                        textureOr0(monsterTextures, m->getName())
+                    };
+
+                    if (drawCharacter(monsterChar) && selectedCard >= 0 && active)
                     {
-                        Character monsterChar{
-                            m->getName(),
-                            m->getHealth(),
-                            m->getMaxHealth(),
-                            0, 0,
-                            textureOr0(monsterTextures, m->getName())
-                        };
-                        drawCharacter(monsterChar);
+                        try {
+                            currentMatch->apply(active->getHandCard(selectedCard), *m);
+                        }
+                        catch (const std::exception& e) {
+                            std::cerr << e.what() << "\n";
+                        }
+                        selectedCard = -1;
                     }
                 }
 
                 ImGui::EndChild();
 
+                // Current mana of the active hero, used to decide which cards can be played
+                int heroMana = 0;
+                if (!matchHeroes.empty() && matchHeroes[0])
+                    heroMana = matchHeroes[0]->getMana();
+
                 // 3. BOTTOM TRAY: Card Hand & Deck Selection
                 ImGui::BeginChild("CardTray", ImVec2(0, 0), true);
-                ImGui::Text("Card Hand & Deck Tray (Coming soon in Card/Deck model task)");
+
+                float rowY = ImGui::GetCursorPosY() + 15.0f;
+
+                if (active)
+                {
+                    for (std::size_t i = 0; i < active->getHandSize(); i++)
+                    {
+                        const Card& card = active->getHandCard(i);
+                        const HeroCard* hc = dynamic_cast<const HeroCard*>(&card);
+
+                        CardView view{
+                            card.getName(),
+                            card.getManaCost(),
+                            hc ? hc->getEffect() : HeroEffect::ATTACK,
+                            hc ? hc->getValue() : 0
+                        };
+
+                        if (i > 0) ImGui::SameLine();
+                        // to distinguish the selected card
+                        bool isSelected = ((int)i == selectedCard);
+                        ImGui::SetCursorPosY(rowY - (isSelected ? 15.0f : 0.0f));
+
+                        if (drawCard(view, heroMana >= view.manaCost, isSelected))
+                            selectedCard = isSelected ? -1 : (int)i;
+                    }
+                }
+
                 ImGui::EndChild();
             }
             else

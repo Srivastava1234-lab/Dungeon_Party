@@ -3,6 +3,7 @@
 
 #include <string>
 #include <glad/glad.h>
+#include "Types.h"
 
 class Match;
 
@@ -15,12 +16,20 @@ struct Character {
     GLuint textureID = 0;
 };
 
+// decoupled from card.h, graphics stay independent of the game engine rules.
+struct CardView {
+    std::string name;
+    int manaCost;
+    HeroEffect effect;
+    int value;
+};
+
 enum class Screen { Start, Battle };
 
 bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
-void drawCharacter(const Character& c);
+bool drawCharacter(const Character& c);
+bool drawCard(const CardView& c, bool playable, bool selected);
 void drawTurnIndicator(const Match& match);
-
 class Renderer {
 };
 
