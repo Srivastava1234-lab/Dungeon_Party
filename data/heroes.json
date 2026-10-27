@@ -1,17 +1,18 @@
 {
-  "_note": "Hero definitions (SCRUM-5). Entries with \"temporary\": true use placeholder values until Irma confirms the final game values.",
+  "_note": "Hero definitions (SCRUM-5). Sprint 1: WARRIOR is the only playable hero. Entries with \"temporary\": true are not confirmed as final yet.",
   "heroes": [
     {
       "id": "warrior",
       "name": "Warrior",
       "heroClass": "WARRIOR",
-      "maxHealth": 30,
-      "maxMana": 3,
+      "maxHealth": 100,
+      "maxMana": 50,
+      "image": "assets/Warrior_Artwork.png",
       "startingDeck": [
-        { "card": "strike", "count": 10 }
+        { "card": "strike", "count": 5 }
       ],
       "temporary": true,
-      "_note": "maxHealth 30, maxMana 3 and 10 Strike cards are copied from Kagan's console_main.cpp. Not final."
+      "_note": "maxHealth 100, maxMana 50 and 5 Strike cards come from the Sprint 1 requirements (team chat, 23.10.2026). The image is the warrior artwork in assets/."
     }
   ]
 }

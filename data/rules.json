@@ -1,0 +1,10 @@
+{
+  "_note": "Match rules (SCRUM-5). Configuration values only - the game code uses them in its own tasks (turn manager, deck, mana). The hero turn timer is implemented in Sprint 2. Values come from the Sprint 1 requirements (team chat, 23.10.2026).",
+  "maxCardsPlayedPerTurn": 3,
+  "cardsDrawnPerTurn": 2,
+  "shuffleDeckAtMatchStart": true,
+  "refillManaEachRound": true,
+  "maxManaIncreasePerRound": 0,
+  "heroTurnTimeLimitSeconds": 30,
+  "temporary": true
+}
