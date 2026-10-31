@@ -23,6 +23,13 @@ class Match {
     DungeonMaster* dm = nullptr;
     void beginTurn(Player& player);
     void checkWinner();
+    struct MonsterAction {
+        Monster* monster;
+        const Card* card;
+        Hero* target;
+    };
+    std::vector<MonsterAction> monsterActions;
+
 
 public:
     Match(std::string id, int maxRounds = 20);
@@ -40,7 +47,6 @@ public:
     const std::vector<Hero*>& getHeroes() const { return heroes; }
     const std::vector<std::unique_ptr<Monster>>& getMonsters() const { return monsters; }
     Player* getActivePlayer() const;
-
-};
+    void queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target);};
 
 #endif

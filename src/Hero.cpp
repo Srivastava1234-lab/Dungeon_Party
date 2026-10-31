@@ -27,7 +27,7 @@ void Hero::takeDamage(int amount){
         return;
     }
 
-    health -= std::min(health, amount); // never drops below 0
+    health = std::max(0, health-amount);
 }
 
 void Hero::heal(int amount){
@@ -35,7 +35,7 @@ void Hero::heal(int amount){
         return;
     }
 
-    health = std::min(type.maxHealth, health + std::min(amount, type.maxHealth)); // capped at maxHealth, no int overflow
+    health += std::max(0, health-amount);
 }
 
 bool Hero::isAlive() const{
