@@ -49,6 +49,7 @@ std::string effectName(const CardDefinition& card) {
             case DMEffect::SUMMON: return "SUMMON";
             case DMEffect::TRAP: return "TRAP";
             case DMEffect::DEFENSIVE: return "DEFENSIVE";
+            case DMEffect::ATTACK: return "ATTACK";
         }
     }
     return "?";

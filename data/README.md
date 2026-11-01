@@ -71,7 +71,7 @@ as final yet – see the table at the end.
 Allowed `effect` values (from `Types.h`):
 
 - `side: "HEROES"` → `ATTACK`, `HEAL`, `BUFF`, `SPELL` (`HeroEffect`)
-- `side: "DUNGEON_MASTER"` → `SUMMON`, `TRAP`, `DEFENSIVE` (`DMEffect`)
+- `side: "DUNGEON_MASTER"` → `SUMMON`, `TRAP`, `DEFENSIVE`, `ATTACK` (`DMEffect`)
 
 Sprint 1 has exactly one card: the attack card `strike`.
 
@@ -275,3 +275,11 @@ On Windows with Visual Studio the program is `build\Debug\validate_data.exe`.
 `ctest --test-dir build` runs the same check as a test. Exit code 0 = data OK
 (temporary values and missing pictures are only warnings), exit code 1 = error
 (the message names the file and the entry).
+
+## Card validation regression tests (SCRUM-48)
+
+Build `card_data_tests` and run `ctest --test-dir <build-folder> -R "^card_data_" --output-on-failure`.
+The tests use temporary copies, leaving the real data files unchanged. They cover valid
+hero/DM effects, missing or malformed files, invalid fields and numbers, duplicate IDs,
+unknown effects, and invalid hero deck references. Loading a valid effect does not mean
+its gameplay behaviour is implemented.

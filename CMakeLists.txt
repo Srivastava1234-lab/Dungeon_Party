@@ -129,3 +129,11 @@ target_include_directories(combat_tests PRIVATE include)
 foreach(case_name attack_damage invalid_targets monster_damage victory round_limit)
     add_test(NAME combat_${case_name} COMMAND combat_tests ${case_name})
 endforeach()
+
+# SCRUM-48: validate card files using isolated temporary fixtures.
+add_executable(card_data_tests tests/card_data_tests.cpp)
+target_link_libraries(card_data_tests PRIVATE game_data nlohmann_json::nlohmann_json)
+foreach(case_name valid_effects missing_file malformed_json structure required_fields field_types numbers ids enums deck_references)
+    add_test(NAME card_data_${case_name}
+        COMMAND card_data_tests ${case_name} "${CMAKE_CURRENT_SOURCE_DIR}/data")
+endforeach()
