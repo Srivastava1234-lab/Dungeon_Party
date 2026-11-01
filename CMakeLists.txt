@@ -153,3 +153,18 @@ target_include_directories(monster_card_tests PRIVATE include)
 foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end)
     add_test(NAME monster_card_${case_name} COMMAND monster_card_tests ${case_name})
 endforeach()
+
+# SCRUM-46: known healing regression is intentionally reported as failing.
+add_executable(healing_tests
+        tests/healing_tests.cpp
+        src/Card.cpp
+        src/DungeonMaster.cpp
+        src/Hero.cpp
+        src/Monster.cpp
+        src/Player.cpp
+)
+target_include_directories(healing_tests PRIVATE include)
+foreach(case_name amount max_cap full_health nonpositive large_amount card_effect role_and_target)
+    add_test(NAME healing_${case_name} COMMAND healing_tests ${case_name})
+    set_tests_properties(healing_${case_name} PROPERTIES LABELS "healing")
+endforeach()
