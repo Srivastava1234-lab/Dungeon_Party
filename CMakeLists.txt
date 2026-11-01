@@ -137,3 +137,19 @@ foreach(case_name valid_effects missing_file malformed_json structure required_f
     add_test(NAME card_data_${case_name}
         COMMAND card_data_tests ${case_name} "${CMAKE_CURRENT_SOURCE_DIR}/data")
 endforeach()
+
+# SCRUM-46 (partial): current DM attack cards and queued monster actions.
+add_executable(monster_card_tests
+        tests/monster_card_tests.cpp
+        src/Card.cpp
+        src/DungeonMaster.cpp
+        src/Hero.cpp
+        src/Match.cpp
+        src/Monster.cpp
+        src/Player.cpp
+        src/Trap.cpp
+)
+target_include_directories(monster_card_tests PRIVATE include)
+foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end)
+    add_test(NAME monster_card_${case_name} COMMAND monster_card_tests ${case_name})
+endforeach()
