@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <random>
+
 Player::Player(std::string id, std::string n, int maximum, bool b)
     : name(std::move(n)), 
     mana(maximum), 
@@ -23,8 +25,15 @@ void Player::addToDeck(std::unique_ptr<Card> c) {
 
 const Card* Player::drawCard() {
     if (deck.empty()){
-        return nullptr;
-    }
+        if(discardPile.empty()){
+            return nullptr;     
+        }
+
+        //swap() moves the discard pile into the empty deck. shuffle() randomizes its order. If both piles are empty, drawing stops.
+        deck.swap(discardPile);
+        static std::mt19937 generator(std::random_device{}());
+        std::shuffle(deck.begin(), deck.end(), generator);
+    }    
 
     hand.push_back(std::move(deck.front()));
     deck.erase(deck.begin());

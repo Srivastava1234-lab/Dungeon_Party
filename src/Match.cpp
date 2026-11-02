@@ -37,11 +37,44 @@ void Match::start() {
     if (heroes.empty() || heroes.size() > 6 || !dm || monsters.empty()) {
         throw std::logic_error("Need 1-6 heroes, exactly one DM and at least one monster");
     }
-    started = true; round = 1; activeHero = 0; phase = Phase::HERO_TURN;
+    
+    for (std::size_t i = 0; i < heroes.size(); i++) {
+        for (int cardNumber = 0; cardNumber < 5; cardNumber++) {
+            heroes[i]->drawCard();
+        }
+    }
+
+    started = true;
+    round = 1;
+    activeHero = 0;
+    phase = Phase::HERO_TURN;
+
     beginTurn(*heroes.front());
 }
 
-void Match::beginTurn(Player& p) { p.refillMana(); p.cardsPlayedThisTurn = 0; p.drawCard(); }
+void Match::beginTurn(Player& player) {
+    player.refillMana();
+    player.cardsPlayedThisTurn = 0;
+
+    Hero* hero = dynamic_cast<Hero*>(&player);
+
+    if (hero != nullptr) {
+        // Heroes already received their starting hand in round one.
+        if (round > 1) {
+            for (int i = 0; i < 2; i++) {
+                if (player.getHandSize() >= 7) {
+                    break;
+                }
+
+                if (player.drawCard() == nullptr) {
+                    break;
+                }
+            }
+        }
+    } else {
+        player.drawCard();
+    }    
+}
 
 Player* Match::getActivePlayer() const {
     if (!started || isFinished()) return nullptr;

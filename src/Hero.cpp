@@ -30,12 +30,18 @@ void Hero::takeDamage(int amount){
     health = std::max(0, health-amount);
 }
 
-void Hero::heal(int amount){
-    if(amount <= 0){
+void Hero::heal(int amount) {
+    if (amount <= 0) {
         return;
     }
 
-    health += std::max(0, health-amount);
+    int missingHealth = type.maxHealth - health;
+
+    if (amount > missingHealth) {
+        health = type.maxHealth;
+    } else {
+        health += amount;
+    }
 }
 
 bool Hero::isAlive() const{
