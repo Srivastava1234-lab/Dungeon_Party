@@ -22,12 +22,20 @@ int Hero::getHealth() const{
     return health;
 }
 
-void Hero::takeDamage(int amount){
-    if(amount <= 0){
+void Hero::takeDamage(int amount) {
+    if (amount <= 0) {
         return;
     }
 
-    health = std::max(0, health-amount);
+    if (shield >= amount) {
+        shield -= amount;
+        return;
+    }
+
+    amount -= shield;
+    shield = 0;
+
+    health = std::max(0, health - amount);
 }
 
 void Hero::heal(int amount) {
@@ -72,4 +80,16 @@ int Hero::consumeAttackReduction() {
 
 int Hero::getAttackReduction() const {
     return attackReduction;
+}
+
+void Hero::addShield(int amount) {
+    if (amount <= 0) {
+        return;
+    }
+
+    shield += amount;
+}
+
+int Hero::getShield() const {
+    return shield;
 }

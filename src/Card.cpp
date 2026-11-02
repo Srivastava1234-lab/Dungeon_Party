@@ -28,23 +28,26 @@ bool HeroCard::canBePlayedBy(const Player& p) const {
 }
 
 void HeroCard::applyEffect(Targetable& target) const {
-    if (effect == HeroEffect::ATTACK ||
-        effect == HeroEffect::SPELL) {
+    if (effect == HeroEffect::ATTACK || effect == HeroEffect::SPELL) {
         target.takeDamage(value);
-    } else if (effect == HeroEffect::HEAL) {
+    } else if (effect == HeroEffect::HEAL || effect == HeroEffect::SHIELD) {
         Hero* hero = dynamic_cast<Hero*>(&target);
 
         if (hero == nullptr) {
-            throw std::invalid_argument(
-                "Healing requires a hero target"
-            );
+            throw std::invalid_argument("This card requires a hero target");
         }
 
-        hero->heal(value);
+        if (!hero->isAlive()) {
+            throw std::invalid_argument("Cannot target a defeated hero");
+        }
+
+        if (effect == HeroEffect::HEAL) {
+            hero->heal(value);
+        } else {
+            hero->addShield(value);
+        }
     } else {
-        throw std::logic_error(
-            "Buff rules are not implemented yet"
-        );
+        throw std::logic_error("This hero effect is not implemented yet");
     }
 }
 

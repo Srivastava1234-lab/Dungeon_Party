@@ -5,7 +5,7 @@
 #include <string>
 
 
-enum class HeroEffect { ATTACK, HEAL, BUFF, SPELL };
+enum class HeroEffect { ATTACK, HEAL, BUFF, SPELL, SHIELD};
 enum class DMEffect { SUMMON, TRAP, DEFENSIVE, ATTACK, WEAKNESS};
 enum class Phase { ROUND_START, HERO_TURN, DM_TURN, MONSTER_ACTIONS };
 enum class Side { HEROES, DUNGEON_MASTER };

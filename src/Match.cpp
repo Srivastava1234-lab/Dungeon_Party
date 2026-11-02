@@ -136,13 +136,14 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     if (hc->getEffect() == HeroEffect::BUFF){
         return fail("Buff rules are not implemented yet");
     } 
-    if (hc->getEffect() == HeroEffect::HEAL) {
-        for (const auto* h : heroes){
-            if (h == &t && h->isAlive()){
+    if (hc->getEffect() == HeroEffect::HEAL || hc->getEffect() == HeroEffect::SHIELD) {
+        for (int i = 0; i < heroes.size(); i++) {
+            if (heroes[i] == &t && heroes[i]->isAlive()) {
                 return {true, std::nullopt};
-            } 
-        } 
-        return fail("Healing requires a living allied hero");
+            }
+        }
+
+        return fail("Healing and shielding require a living allied hero");
     }
     for (const auto& m : monsters){
         if (m.get() == &t && m->isAlive()) {
@@ -154,9 +155,13 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
 
 void Match::apply(const Card& c, Targetable& t) {
     auto* p = getActivePlayer();
-    if (!p) throw std::logic_error("No active player");
+    if (!p) {
+        throw std::logic_error("No active player");
+    }
     auto check = validate(*p, c, t);
-    if (!check.valid) throw std::invalid_argument(check.reason.value());
+    if (!check.valid){
+        throw std::invalid_argument(check.reason.value());
+    } 
     p->playCard(c, t); checkWinner();
 }
 
@@ -170,7 +175,9 @@ void Match::checkWinner() {
         livingBoss = livingBoss || (m->isBoss() && m->isAlive());
         livingMonster = livingMonster || m->isAlive();
     }
-    if ((hadBoss && !livingBoss) || !livingMonster) winner = Side::HEROES;
+    if ((hadBoss && !livingBoss) || !livingMonster){
+        winner = Side::HEROES;
+    } 
 }
 
 void Match::endTurn(Player& p) {
@@ -205,8 +212,12 @@ void Match::endTurn(Player& p) {
         monsterActions.clear();
 
         checkWinner();
-        if (isFinished()) return;
-        if (round >= maxRounds) { winner = Side::DUNGEON_MASTER; return; }
+        if (isFinished()){
+             return;
+        }
+        if (round >= maxRounds) { 
+            winner = Side::DUNGEON_MASTER; return; 
+        }
         phase = Phase::ROUND_START; ++round; activeHero = 0;
         while (!heroes[activeHero]->isAlive()) ++activeHero;
         phase = Phase::HERO_TURN; beginTurn(*heroes[activeHero]);

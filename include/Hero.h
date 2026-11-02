@@ -9,6 +9,7 @@ private:
     int health;
     HeroType type;
     int attackReduction = 0;
+    int shield = 0;
 
 public:
     Hero(std::string id, std::string name, HeroType type, int maxMana, bool bot = false);
@@ -21,6 +22,8 @@ public:
     void applyWeakness(int amount);
     int consumeAttackReduction();
     int getAttackReduction() const;
+    void addShield(int amount);
+    int getShield() const;
 };
 
 
