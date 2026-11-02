@@ -27,6 +27,27 @@ bool HeroCard::canBePlayedBy(const Player& p) const {
     return hero && (effect != HeroEffect::HEAL || hero->getType().heroClass == HeroClass::HEALER);
 }
 
+void HeroCard::applyEffect(Targetable& target) const {
+    if (effect == HeroEffect::ATTACK ||
+        effect == HeroEffect::SPELL) {
+        target.takeDamage(value);
+    } else if (effect == HeroEffect::HEAL) {
+        Hero* hero = dynamic_cast<Hero*>(&target);
+
+        if (hero == nullptr) {
+            throw std::invalid_argument(
+                "Healing requires a hero target"
+            );
+        }
+
+        hero->heal(value);
+    } else {
+        throw std::logic_error(
+            "Buff rules are not implemented yet"
+        );
+    }
+}
+
 void DMCard::applyEffect(Targetable& target) const {
     if (effect == DMEffect::ATTACK || effect == DMEffect::WEAKNESS) {
 
