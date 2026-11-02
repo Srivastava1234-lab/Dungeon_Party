@@ -158,7 +158,19 @@ int main()
                 ImGui::SetWindowFontScale(1.0f);
                 ImGui::TextWrapped("%s", errorMessage.c_str());
             }
-            else if (ImGui::Button("Start match", ImVec2(-1, 70)))
+            else if (ImGui::Button("Menu", ImVec2(-1, 70)))
+            {
+                screen = Screen::Menu;
+            }
+            ImGui::End();
+        }
+
+         else if (screen == Screen::Menu)
+        {
+            ImGui::Begin("Menu", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+            ImGui::Text("Menu");
+            if (ImGui::Button("TEMPORARY: local test match"))
             {
                 try
                 {
@@ -204,10 +216,12 @@ int main()
                     errorMessage = std::string("Could not start the match:\n") + e.what();
                     std::cerr << errorMessage << "\n";
                 }
+
             }
             ImGui::End();
+        
         }
-        else {
+        else if(screen == Screen::Battle){
             // Full-screen battle layout
             ImGui::SetNextWindowPos(ImVec2(0, 0));
             ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
