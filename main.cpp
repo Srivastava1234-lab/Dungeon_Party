@@ -93,19 +93,13 @@ int main()
         errorMessage = std::string("Could not load game data:\n") + e.what();
         std::cerr << errorMessage << "\n";
     }
-// the following lines can be removed once we do the second merge *****
-    std::vector<CardView> hand = {
-    {"Strike",     1, HeroEffect::ATTACK, 5},
-    {"Heavy blow", 5, HeroEffect::ATTACK, 14},
-    {"Heal",  2, HeroEffect::HEAL, 6}
-};
-// until here                                                    *****
 
     // Load every PNG once at startup. Heroes are keyed by hero id, monsters by name
     // (those are the values the Hero/Monster objects carry).
     std::map<std::string, GLuint> heroTextures;
     std::map<std::string, GLuint> monsterTextures;
     GLuint bgTexture = 0;
+    GLuint menuTexture = 0;
     int width = 0, height = 0;
     if (gameData)
     {
@@ -123,6 +117,8 @@ int main()
         }
     }
     LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &width, &height);
+    LoadTextureFromFile(projectPath("assets/Menu_Background_AI_Generated.png").c_str(), &menuTexture, &width, &height);
+
 
     auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) -> GLuint {
         auto it = textures.find(key);
@@ -185,6 +181,12 @@ int main()
             ImGui::Begin("Menu", nullptr,
                          ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
 
+            if (menuTexture != 0)
+            {
+                ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)menuTexture,
+                                                    ImVec2(0, 0), ImGui::GetIO().DisplaySize);
+            }
+
             if(ImGui::Button("Back")){
                 screen = Screen::Start;
             }
@@ -193,34 +195,57 @@ int main()
                 {
                     showHelp = !showHelp;
                 }
-            ImGui::Text("Menu");
-            ImGui::InputTextWithHint("##name", "Your name", nameBuf, sizeof(nameBuf));
-            float panelWidth = ImGui::GetContentRegionAvail().x / 2 - 10;
+            ImVec2 win = ImGui::GetIO().DisplaySize;
+            ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.2f));
+            ImGui::SetNextItemWidth(win.x * 0.3f);
 
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text,    ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
+            ImGui::InputTextWithHint("##name", "Your name", nameBuf, sizeof(nameBuf));
+            ImGui::PopStyleColor(2);
+            // A player can enter or create a lobby if the name field is not empty.
+            bool nameFilled = nameBuf[0] != '\0'; //Cstr ends with \0! so if the first char is that there is no name!
+            // Placing the widgets inside the empty box of the menuPic_AI_generated.png
+            
+            float panelW = win.x * 0.235f;
+            float panelH = win.y * 0.40f;
+            ImGui::SetCursorPos(ImVec2(win.x * 0.07f, win.y * 0.35f));
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.85f, 0.70f, 0.40f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.80f, 0.50f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.75f, 0.60f, 0.30f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg,       ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
             // Left panel -- Hosting --
-            ImGui::BeginChild("Host", ImVec2(panelWidth,300), true);
+            ImGui::BeginChild("Host", ImVec2(panelW,panelH), true);
             ImGui::Text("HOST A PARTY");
             ImGui::TextWrapped("Create a room and share its code with your friends.");
 
+            ImGui::BeginDisabled(!nameFilled);
             if(ImGui::Button("New Adventure", ImVec2(-1,50))){
                 isHost = true;
                 screen = Screen::Lobby;
             }
+            ImGui::EndDisabled();
+
             ImGui::EndChild();
 
-            
-            ImGui::SameLine();
+            ImGui::SetCursorPos(ImVec2(win.x * 0.71f, win.y * 0.35f));
 
             // Right panel -- Joining --
-            ImGui::BeginChild("Join", ImVec2(panelWidth,300), true);
+            ImGui::BeginChild("Join", ImVec2(panelW,panelH), true);
             ImGui::Text("Join A PARTY");
             ImGui::TextWrapped("Enter the code you got from the host:");
             ImGui::InputTextWithHint("##code", "Room code", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
+            ImGui::BeginDisabled(!nameFilled);
             if(ImGui::Button("Join", ImVec2(-1, 50))){
                 isHost = false;
                 screen = Screen::Lobby;
             }
+            ImGui::EndDisabled();
             ImGui::EndChild();
+
+            ImGui::PopStyleColor(5); //every color needs to be popped from the stack to set a new one.
 
             ImGui::End();
             
@@ -252,7 +277,7 @@ int main()
                 ImGui::BulletText("%s", name.c_str());
 
             
-            
+
             if (isHost){
 
                 if (ImGui::Button("Start match", ImVec2(200, 40)))
@@ -303,6 +328,9 @@ int main()
                         std::cerr << errorMessage << "\n";
                     }
                 }
+            }
+            else if(!isHost){
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Waiting for the host to start the match...");
             }
 
 
