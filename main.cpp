@@ -131,7 +131,13 @@ int main()
 
 
     int selectedCard = -1; // nothing is selected
+    char nameBuf[17] = "";   // player name, up to 16 characters
+    char codeBuf[7] = "";    // room code, 6 characters
+    bool showHelp = false;
+
+    // *****************************************************
     // Main loop clear screen to a color until window closed
+    // *****************************************************
     while (!glfwWindowShouldClose(window))
     {
         glClearColor(0.12f, 0.34f, 0.56f, 1.0f);
@@ -167,9 +173,40 @@ int main()
 
          else if (screen == Screen::Menu)
         {
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
             ImGui::Begin("Menu", nullptr,
                          ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+
+            if(ImGui::Button("Back")){
+                screen = Screen::Start;
+            }
+            ImGui::SameLine(ImGui::GetWindowWidth() - 50);
+                if (ImGui::Button("?"))
+                {
+                    showHelp = !showHelp;
+                }
             ImGui::Text("Menu");
+            ImGui::InputTextWithHint("##name", "Your name", nameBuf, sizeof(nameBuf));
+            float panelWidth = ImGui::GetContentRegionAvail().x / 2 - 10;
+
+            // Left panel -- Hosting --
+            ImGui::BeginChild("Host", ImVec2(panelWidth,300), true);
+            ImGui::Text("HOST A PARTY");
+            ImGui::TextWrapped("Create a room and share its code with your friends.");
+            ImGui::Button("New Advanture", ImVec2(-1,50));
+            ImGui::EndChild();
+
+            ImGui::SameLine();
+
+            // Right panel -- Joining --
+            ImGui::BeginChild("Join", ImVec2(panelWidth,300), true);
+            ImGui::Text("Join A PARTY");
+            ImGui::TextWrapped("Enter the code you got from the host:");
+            ImGui::InputTextWithHint("##code", "Room code", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
+            ImGui::Button("Join", ImVec2(-1, 50));
+            ImGui::EndChild();
+
             if (ImGui::Button("TEMPORARY: local test match"))
             {
                 try
@@ -219,7 +256,13 @@ int main()
 
             }
             ImGui::End();
-        
+        if (showHelp)
+        {
+            ImGui::Begin("Help", &showHelp);
+            ImGui::TextWrapped("Host a room to get a code and share it with your friends. "
+                            "Or enter a friend's code on the right to join their room.");
+            ImGui::End();
+        }
         }
         else if(screen == Screen::Battle){
             // Full-screen battle layout
