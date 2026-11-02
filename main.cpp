@@ -130,10 +130,17 @@ int main()
     };
 
 
-    int selectedCard = -1; // nothing is selected
+    int selectedCard = -1;   // nothing is selected
     char nameBuf[17] = "";   // player name, up to 16 characters
     char codeBuf[7] = "";    // room code, 6 characters
-    bool showHelp = false;
+    bool showHelp = false;   
+    bool isHost = false;     // Only host can start the match
+
+    // FAKE DATA: until  server can send the code
+    std::string roomCode = "PLAYER";
+    std::vector<std::string> lobbyPlayers = {"Player 2","Player 3"};
+    // Ends here
+
 
     // *****************************************************
     // Main loop clear screen to a color until window closed
@@ -194,9 +201,14 @@ int main()
             ImGui::BeginChild("Host", ImVec2(panelWidth,300), true);
             ImGui::Text("HOST A PARTY");
             ImGui::TextWrapped("Create a room and share its code with your friends.");
-            ImGui::Button("New Advanture", ImVec2(-1,50));
+
+            if(ImGui::Button("New Adventure", ImVec2(-1,50))){
+                isHost = true;
+                screen = Screen::Lobby;
+            }
             ImGui::EndChild();
 
+            
             ImGui::SameLine();
 
             // Right panel -- Joining --
@@ -204,66 +216,101 @@ int main()
             ImGui::Text("Join A PARTY");
             ImGui::TextWrapped("Enter the code you got from the host:");
             ImGui::InputTextWithHint("##code", "Room code", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
-            ImGui::Button("Join", ImVec2(-1, 50));
+            if(ImGui::Button("Join", ImVec2(-1, 50))){
+                isHost = false;
+                screen = Screen::Lobby;
+            }
             ImGui::EndChild();
 
-            if (ImGui::Button("TEMPORARY: local test match"))
+            ImGui::End();
+            
+            // Help is TEMPORARY for now 
+            if (showHelp)
             {
-                try
-                {
-                    // 1. Load Level 1 definition from JSON using GameData
-                    LevelDefinition lvl1 = gameData->loadLevel(1);
-
-                    // 2. Initialize the Match object using level max rounds
-                    auto match = std::make_unique<Match>("match_1", lvl1.maxRounds);
-
-                    // 3. Load the default Heroes for Level 1 (e.g., Warrior)
-                    int heroCount = 0;
-                    for (const auto& heroId : lvl1.defaultHeroes)
-                    {
-                        const auto& heroDef = gameData->getHero(heroId);
-                        auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
-
-                        // TEMPORARY until task 15 fills the deck from heroes.json
-                        for (int i = 0; i < 10; ++i)
-                            loadedHero->addToDeck(std::make_unique<HeroCard>("Strike", 1, HeroEffect::ATTACK, 5));
-
-                        match->addPlayer(std::move(loadedHero));
-                        ++heroCount;
-                    }
-
-                    // 3.5. Create and add the Dungeon Master (Required by Match rules!)
-                    match->addPlayer(std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10));
-
-                    // 4. Load Level 1 Monsters from JSON: countPerHero x number of heroes (see data/README.md)
-                    for (const auto& monsterEntry : lvl1.monsters)
-                    {
-                        const auto& monsterDef = gameData->getMonster(monsterEntry.monsterId);
-                        for (int i = 0; i < monsterEntry.countPerHero * heroCount; ++i)
-                            match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
-                    }
-
-                    // 5. Start the match and switch to the battle screen
-                    match->start();
-                    currentMatch = std::move(match);
-                    screen = Screen::Battle;
-                }
-                catch (const std::exception& e)
-                {
-                    errorMessage = std::string("Could not start the match:\n") + e.what();
-                    std::cerr << errorMessage << "\n";
-                }
-
+                ImGui::Begin("Help", &showHelp);
+                ImGui::TextWrapped("Host a room to get a code and share it with your friends. "
+                                "Or enter a friend's code on the right to join their room.");
+                ImGui::End();
             }
-            ImGui::End();
-        if (showHelp)
-        {
-            ImGui::Begin("Help", &showHelp);
-            ImGui::TextWrapped("Host a room to get a code and share it with your friends. "
-                            "Or enter a friend's code on the right to join their room.");
-            ImGui::End();
         }
+        // Lobby screen 
+        else if (screen == Screen::Lobby){
+
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+            ImGui::Begin("Lobby", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+
+            if(ImGui::Button("Leave")){
+                screen = Screen::Menu;
+            }
+            ImGui::Text("Lobby");
+            ImGui::Text("Room code: %s", roomCode.c_str());
+            ImGui::Text("Players:");
+            ImGui::BulletText("%s ", nameBuf); // the name of the current player (you)
+            for (const auto& name : lobbyPlayers)
+                ImGui::BulletText("%s", name.c_str());
+
+            
+            
+            if (isHost){
+
+                if (ImGui::Button("Start match", ImVec2(200, 40)))
+                {
+                    
+                    try
+                    {
+                        // 1. Load Level 1 definition from JSON using GameData
+                        LevelDefinition lvl1 = gameData->loadLevel(1);
+
+                        // 2. Initialize the Match object using level max rounds
+                        auto match = std::make_unique<Match>("match_1", lvl1.maxRounds);
+
+                        // 3. Load the default Heroes for Level 1 (e.g., Warrior)
+                        int heroCount = 0;
+                        for (const auto& heroId : lvl1.defaultHeroes)
+                        {
+                            const auto& heroDef = gameData->getHero(heroId);
+                            auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
+
+                            // TEMPORARY until task 15 fills the deck from heroes.json
+                            for (int i = 0; i < 10; ++i)
+                                loadedHero->addToDeck(std::make_unique<HeroCard>("Strike", 1, HeroEffect::ATTACK, 5));
+
+                            match->addPlayer(std::move(loadedHero));
+                            ++heroCount;
+                        }
+
+                        // 3.5. Create and add the Dungeon Master (Required by Match rules!)
+                        match->addPlayer(std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10));
+
+                        // 4. Load Level 1 Monsters from JSON: countPerHero x number of heroes (see data/README.md)
+                        for (const auto& monsterEntry : lvl1.monsters)
+                        {
+                            const auto& monsterDef = gameData->getMonster(monsterEntry.monsterId);
+                            for (int i = 0; i < monsterEntry.countPerHero * heroCount; ++i)
+                                match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
+                        }
+
+                        // 5. Start the match and switch to the battle screen
+                        match->start();
+                        currentMatch = std::move(match);
+                        screen = Screen::Battle;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        errorMessage = std::string("Could not start the match:\n") + e.what();
+                        std::cerr << errorMessage << "\n";
+                    }
+                }
+            }
+
+
+
+            ImGui::End();
+
         }
+        // ****** Battle Screen ******
         else if(screen == Screen::Battle){
             // Full-screen battle layout
             ImGui::SetNextWindowPos(ImVec2(0, 0));
