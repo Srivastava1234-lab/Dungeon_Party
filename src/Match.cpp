@@ -83,22 +83,72 @@ Player* Match::getActivePlayer() const {
 }
 
 CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t) const {
-    auto fail = [](const char* s){ return CheckResult{false, std::string(s)}; };
-    if (!started || isFinished()) return fail("Match is not active");
-    if (getActivePlayer() != &p) return fail("It is not this player's turn");
-    if (std::none_of(p.hand.begin(), p.hand.end(), [&](const auto& x){return x.get() == &c;}))
+    auto fail = [](const char* s){ 
+        return CheckResult{
+            false, std::string(s)
+        }; 
+    };
+
+    if (!started || isFinished()){ 
+        return fail("Match is not active");
+    }
+
+    if (getActivePlayer() != &p){
+         return fail("It is not this player's turn");
+    }
+
+
+    if (std::none_of(p.hand.begin(), p.hand.end(), [&](const auto& x){return x.get() == &c;})){
         return fail("Card is not in this player's hand");
-    if (!c.canBePlayedBy(p)) return fail("Wrong card for role");
-    if (!p.canPay(c.getManaCost())) return fail("Not enough mana");
-    if (p.cardsPlayedThisTurn >= 3) return fail("Three-card turn limit reached");
+    }
+        
+    if (!c.canBePlayedBy(p)) {
+        return fail("Wrong card for role");
+    }
+    if (!p.canPay(c.getManaCost())){
+        return fail("Not enough mana");
+    } 
+
+    if (p.cardsPlayedThisTurn >= 3){
+        return fail("Three-card turn limit reached");
+    } 
+
+    const DMCard* dmCard = dynamic_cast<const DMCard*>(&c);
+
+    if (dmCard != nullptr) {
+        if (dmCard->getEffect() != DMEffect::WEAKNESS) {
+            return fail("Use the monster attack queue for attack cards");
+        }
+
+        for (std::size_t i = 0; i < heroes.size(); i++) {
+            if (heroes[i] == &t && heroes[i]->isAlive()) {
+                return {true, std::nullopt};
+            }
+        }
+
+        return fail("Weakness requires a living hero in this match");
+    }
+
     const auto* hc = dynamic_cast<const HeroCard*>(&c);
-    if (!hc) return fail("DM effects are not implemented yet");
-    if (hc->getEffect() == HeroEffect::BUFF) return fail("Buff rules are not implemented yet");
+    if (!hc){
+        return fail("DM effects are not implemented yet");
+    } 
+    if (hc->getEffect() == HeroEffect::BUFF){
+        return fail("Buff rules are not implemented yet");
+    } 
     if (hc->getEffect() == HeroEffect::HEAL) {
-        for (const auto* h : heroes) if (h == &t && h->isAlive()) return {true, std::nullopt};
+        for (const auto* h : heroes){
+            if (h == &t && h->isAlive()){
+                return {true, std::nullopt};
+            } 
+        } 
         return fail("Healing requires a living allied hero");
     }
-    for (const auto& m : monsters) if (m.get() == &t && m->isAlive()) return {true, std::nullopt};
+    for (const auto& m : monsters){
+        if (m.get() == &t && m->isAlive()) {
+            return {true, std::nullopt};
+        }
+    } 
     return fail("Attack requires a living monster in this match");
 }
 

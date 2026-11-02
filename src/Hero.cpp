@@ -51,3 +51,25 @@ bool Hero::isAlive() const{
 const HeroType& Hero::getType() const{
     return type;
 }
+
+void Hero::applyWeakness(int amount) {
+    if (amount <= 0) {
+        return;
+    }
+
+    // Weakness does not stack. Keep the strongest reduction.
+    if (amount > attackReduction) {
+        attackReduction = amount;
+    }
+}
+
+int Hero::consumeAttackReduction() {
+    int reduction = attackReduction;
+    attackReduction = 0;
+
+    return reduction;
+}
+
+int Hero::getAttackReduction() const {
+    return attackReduction;
+}

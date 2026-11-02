@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <utility>
 #include <random>
+#include "Hero.h"
+#include "HeroCard.h"
 
 Player::Player(std::string id, std::string n, int maximum, bool b)
     : name(std::move(n)), 
@@ -57,12 +59,41 @@ void Player::discard(const Card& c) {
     discardPile.push_back(std::move(*it));
     hand.erase(it);
 }
-void Player::playCard(const Card& c, Targetable& t) {
-    // Match has validated this action. Failed effects must not charge mana.
-    c.applyEffect(t);
-    mana -= c.getManaCost();
-    ++cardsPlayedThisTurn;
-    discard(c);
+
+void Player::playCard(const Card& card, Targetable& target) {
+    Hero* hero = dynamic_cast<Hero*>(this);
+    const HeroCard* heroCard = dynamic_cast<const HeroCard*>(&card);
+
+    bool damagingCard = false;
+
+    if (heroCard != nullptr) {
+        if (heroCard->getEffect() == HeroEffect::ATTACK || heroCard->getEffect() == HeroEffect::SPELL) {
+            damagingCard = true;
+        }
+    }
+
+    if (hero != nullptr && damagingCard) {
+        int damage = heroCard->getValue() - hero->getAttackReduction();
+
+        if (damage < 0) {
+            damage = 0;
+        }
+
+        // Apply reduced damage without changing the original card.
+        HeroCard adjustedCard(card.getName(), card.getManaCost(), heroCard->getEffect(), damage);
+
+        adjustedCard.applyEffect(target);
+
+        // Remove Weakness after the attack succeeds.
+        hero->consumeAttackReduction();
+    } else {
+        // Healing and other effects work normally.
+        card.applyEffect(target);
+    }
+
+    mana -= card.getManaCost();
+    cardsPlayedThisTurn++;
+    discard(card);
 }
 
 const std::string& Player::getName() const {
