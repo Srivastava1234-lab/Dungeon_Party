@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <iostream>
 
 Match::Match(std::string id, int limit)
     : matchId(std::move(id)), maxRounds(limit) {
@@ -59,18 +60,16 @@ void Match::beginTurn(Player& player) {
     Hero* hero = dynamic_cast<Hero*>(&player);
 
     if (hero != nullptr) {
-        // Heroes already received their starting hand in round one.
-        if (round > 1) {
-            for (int i = 0; i < 2; i++) {
-                if (player.getHandSize() >= 7) {
-                    break;
-                }
+        for (int i = 0; i < 2; i++) {
+            if (player.getHandSize() >= 7) {
+                break; 
+           }
 
-                if (player.drawCard() == nullptr) {
-                    break;
-                }
+            if (player.drawCard() == nullptr) {
+                break;
             }
         }
+        
     } else {
         player.drawCard();
     }    
