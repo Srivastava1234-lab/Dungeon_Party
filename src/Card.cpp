@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include "Monster.h"
 
 Card::Card(const std::string& n, int cost)
     : name(n),
@@ -27,18 +28,70 @@ bool HeroCard::canBePlayedBy(const Player& p) const {
     return hero && (effect != HeroEffect::HEAL || hero->getType().heroClass == HeroClass::HEALER);
 }
 
-void HeroCard::applyEffect(Targetable& t) const {
-    if (effect == HeroEffect::ATTACK || effect == HeroEffect::SPELL){
-        t.takeDamage(value);
-    } else if(effect == HeroEffect::HEAL){
-        auto* hero = dynamic_cast<Hero*>(&t);
-        if(!hero){
-            throw std::invalid_argument("healing requires a hero target");
+void HeroCard::applyEffect(Targetable& target) const {
+    if (effect == HeroEffect::ATTACK || effect == HeroEffect::SPELL) {
+        target.takeDamage(value);
+
+    } else if (effect == HeroEffect::HEAL || effect == HeroEffect::SHIELD) {
+        Hero* hero = dynamic_cast<Hero*>(&target);
+
+        if (hero == nullptr) {
+            throw std::invalid_argument("This card requires a hero target");
         }
-        hero->heal(value);
+
+        if (!hero->isAlive()) {
+            throw std::invalid_argument("Cannot target a defeated hero");
+        }
+
+        if (effect == HeroEffect::HEAL) {
+            hero->heal(value);
+        } else {
+            hero->addShield(value);
+        }
+
+    } else if (effect == HeroEffect::FIREBALL) {
+        Monster* monster = dynamic_cast<Monster*>(&target);
+
+        if (monster == nullptr) {
+            throw std::invalid_argument("Fireball must target a monster");
+        }
+
+        if (!monster->isAlive()) {
+            throw std::invalid_argument("Cannot target a defeated monster");
+        }
+
+        monster->takeDamage(value);
+
+        if (monster->isAlive()) {
+            monster->applyBurn();
+        }
+
     } else {
-        throw std::logic_error("Buff rules are not implemented yet");
-    } 
+        throw std::logic_error("This hero effect is not implemented yet");
+    }
+}
+
+void DMCard::applyEffect(Targetable& target) const {
+    if (effect == DMEffect::ATTACK || effect == DMEffect::WEAKNESS) {
+
+        Hero* hero = dynamic_cast<Hero*>(&target);
+
+        if (hero == nullptr) {
+            throw std::invalid_argument("This card must target a hero");
+        }
+
+        if (!hero->isAlive()) {
+            throw std::invalid_argument("Cannot target a defeated hero");
+        }
+
+        if (effect == DMEffect::ATTACK) {
+            hero->takeDamage(value);
+        } else {
+            hero->applyWeakness(value);
+        }
+    } else {
+        throw std::logic_error("This DM effect is not implemented yet");
+    }
 }
 
 DMCard::DMCard(std::string n, int c, DMEffect e, int v)
@@ -52,23 +105,23 @@ bool DMCard::canBePlayedBy(const Player& p) const {
     return dynamic_cast<const DungeonMaster*>(&p) != nullptr;
 }
 
-void DMCard::applyEffect(Targetable& target) const{
-     if (effect == DMEffect::ATTACK) {
-        Hero* hero = dynamic_cast<Hero*>(&target);
+// void DMCard::applyEffect(Targetable& target) const{
+//      if (effect == DMEffect::ATTACK) {
+//         Hero* hero = dynamic_cast<Hero*>(&target);
 
-        if (hero == nullptr) {
-            throw std::invalid_argument("Monster attacks must target a hero");
-        }
+//         if (hero == nullptr) {
+//             throw std::invalid_argument("Monster attacks must target a hero");
+//         }
 
-        if (!hero->isAlive()) {
-            throw std::invalid_argument("Cannot attack a defeated hero");
-        }
+//         if (!hero->isAlive()) {
+//             throw std::invalid_argument("Cannot attack a defeated hero");
+//         }
 
-        hero->takeDamage(value);
-    } else {
-        throw std::logic_error("This DM effect is not implemented yet");
-    }
-}
+//         hero->takeDamage(value);
+//     } else {
+//         throw std::logic_error("This DM effect is not implemented yet");
+//     }
+// }
 
 const std::string& Card::getName() const{
     return name;

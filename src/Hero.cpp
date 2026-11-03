@@ -22,20 +22,34 @@ int Hero::getHealth() const{
     return health;
 }
 
-void Hero::takeDamage(int amount){
-    if(amount <= 0){
+void Hero::takeDamage(int amount) {
+    if (amount <= 0) {
         return;
     }
 
-    health = std::max(0, health-amount);
+    if (shield >= amount) {
+        shield -= amount;
+        return;
+    }
+
+    amount -= shield;
+    shield = 0;
+
+    health = std::max(0, health - amount);
 }
 
-void Hero::heal(int amount){
-    if(amount <= 0){
+void Hero::heal(int amount) {
+    if (amount <= 0) {
         return;
     }
 
-    health += std::max(0, health-amount);
+    int missingHealth = type.maxHealth - health;
+
+    if (amount > missingHealth) {
+        health = type.maxHealth;
+    } else {
+        health += amount;
+    }
 }
 
 bool Hero::isAlive() const{
@@ -44,4 +58,38 @@ bool Hero::isAlive() const{
 
 const HeroType& Hero::getType() const{
     return type;
+}
+
+void Hero::applyWeakness(int amount) {
+    if (amount <= 0) {
+        return;
+    }
+
+    // Weakness does not stack. Keep the strongest reduction.
+    if (amount > attackReduction) {
+        attackReduction = amount;
+    }
+}
+
+int Hero::consumeAttackReduction() {
+    int reduction = attackReduction;
+    attackReduction = 0;
+
+    return reduction;
+}
+
+int Hero::getAttackReduction() const {
+    return attackReduction;
+}
+
+void Hero::addShield(int amount) {
+    if (amount <= 0) {
+        return;
+    }
+
+    shield += amount;
+}
+
+int Hero::getShield() const {
+    return shield;
 }

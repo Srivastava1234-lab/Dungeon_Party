@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <iostream>
 
 Match::Match(std::string id, int limit)
     : matchId(std::move(id)), maxRounds(limit) {
@@ -37,11 +38,42 @@ void Match::start() {
     if (heroes.empty() || heroes.size() > 6 || !dm || monsters.empty()) {
         throw std::logic_error("Need 1-6 heroes, exactly one DM and at least one monster");
     }
-    started = true; round = 1; activeHero = 0; phase = Phase::HERO_TURN;
+    
+    for (std::size_t i = 0; i < heroes.size(); i++) {
+        for (int cardNumber = 0; cardNumber < 5; cardNumber++) {
+            heroes[i]->drawCard();
+        }
+    }
+
+    started = true;
+    round = 1;
+    activeHero = 0;
+    phase = Phase::HERO_TURN;
+
     beginTurn(*heroes.front());
 }
 
-void Match::beginTurn(Player& p) { p.refillMana(); p.cardsPlayedThisTurn = 0; p.drawCard(); }
+void Match::beginTurn(Player& player) {
+    player.refillMana();
+    player.cardsPlayedThisTurn = 0;
+
+    Hero* hero = dynamic_cast<Hero*>(&player);
+
+    if (hero != nullptr) {
+        for (int i = 0; i < 2; i++) {
+            if (player.getHandSize() >= 7) {
+                break; 
+           }
+
+            if (player.drawCard() == nullptr) {
+                break;
+            }
+        }
+        
+    } else {
+        player.drawCard();
+    }    
+}
 
 Player* Match::getActivePlayer() const {
     if (!started || isFinished()) return nullptr;
@@ -51,30 +83,85 @@ Player* Match::getActivePlayer() const {
 }
 
 CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t) const {
-    auto fail = [](const char* s){ return CheckResult{false, std::string(s)}; };
-    if (!started || isFinished()) return fail("Match is not active");
-    if (getActivePlayer() != &p) return fail("It is not this player's turn");
-    if (std::none_of(p.hand.begin(), p.hand.end(), [&](const auto& x){return x.get() == &c;}))
-        return fail("Card is not in this player's hand");
-    if (!c.canBePlayedBy(p)) return fail("Wrong card for role");
-    if (!p.canPay(c.getManaCost())) return fail("Not enough mana");
-    if (p.cardsPlayedThisTurn >= 3) return fail("Three-card turn limit reached");
-    const auto* hc = dynamic_cast<const HeroCard*>(&c);
-    if (!hc) return fail("DM effects are not implemented yet");
-    if (hc->getEffect() == HeroEffect::BUFF) return fail("Buff rules are not implemented yet");
-    if (hc->getEffect() == HeroEffect::HEAL) {
-        for (const auto* h : heroes) if (h == &t && h->isAlive()) return {true, std::nullopt};
-        return fail("Healing requires a living allied hero");
+    auto fail = [](const char* s){ 
+        return CheckResult{
+            false, std::string(s)
+        }; 
+    };
+
+    if (!started || isFinished()){ 
+        return fail("Match is not active");
     }
-    for (const auto& m : monsters) if (m.get() == &t && m->isAlive()) return {true, std::nullopt};
+
+    if (getActivePlayer() != &p){
+         return fail("It is not this player's turn");
+    }
+
+
+    if (std::none_of(p.hand.begin(), p.hand.end(), [&](const auto& x){return x.get() == &c;})){
+        return fail("Card is not in this player's hand");
+    }
+        
+    if (!c.canBePlayedBy(p)) {
+        return fail("Wrong card for role");
+    }
+    if (!p.canPay(c.getManaCost())){
+        return fail("Not enough mana");
+    } 
+
+    if (p.cardsPlayedThisTurn >= 3){
+        return fail("Three-card turn limit reached");
+    } 
+
+    const DMCard* dmCard = dynamic_cast<const DMCard*>(&c);
+
+    if (dmCard != nullptr) {
+        if (dmCard->getEffect() != DMEffect::WEAKNESS) {
+            return fail("Use the monster attack queue for attack cards");
+        }
+
+        for (std::size_t i = 0; i < heroes.size(); i++) {
+            if (heroes[i] == &t && heroes[i]->isAlive()) {
+                return {true, std::nullopt};
+            }
+        }
+
+        return fail("Weakness requires a living hero in this match");
+    }
+
+    const auto* hc = dynamic_cast<const HeroCard*>(&c);
+    if (!hc){
+        return fail("DM effects are not implemented yet");
+    } 
+    if (hc->getEffect() == HeroEffect::BUFF){
+        return fail("Buff rules are not implemented yet");
+    } 
+    if (hc->getEffect() == HeroEffect::HEAL || hc->getEffect() == HeroEffect::SHIELD) {
+        for (int i = 0; i < heroes.size(); i++) {
+            if (heroes[i] == &t && heroes[i]->isAlive()) {
+                return {true, std::nullopt};
+            }
+        }
+
+        return fail("Healing and shielding require a living allied hero");
+    }
+    for (const auto& m : monsters){
+        if (m.get() == &t && m->isAlive()) {
+            return {true, std::nullopt};
+        }
+    } 
     return fail("Attack requires a living monster in this match");
 }
 
 void Match::apply(const Card& c, Targetable& t) {
     auto* p = getActivePlayer();
-    if (!p) throw std::logic_error("No active player");
+    if (!p) {
+        throw std::logic_error("No active player");
+    }
     auto check = validate(*p, c, t);
-    if (!check.valid) throw std::invalid_argument(check.reason.value());
+    if (!check.valid){
+        throw std::invalid_argument(check.reason.value());
+    } 
     p->playCard(c, t); checkWinner();
 }
 
@@ -88,17 +175,33 @@ void Match::checkWinner() {
         livingBoss = livingBoss || (m->isBoss() && m->isAlive());
         livingMonster = livingMonster || m->isAlive();
     }
-    if ((hadBoss && !livingBoss) || !livingMonster) winner = Side::HEROES;
+    if ((hadBoss && !livingBoss) || !livingMonster){
+        winner = Side::HEROES;
+    } 
 }
 
 void Match::endTurn(Player& p) {
-    if (getActivePlayer() != &p) throw std::invalid_argument("Not the active player");
+    if (getActivePlayer() != &p){
+        throw std::invalid_argument("Not the active player");
+    } 
     if (phase == Phase::HERO_TURN) {
         do { ++activeHero; } while (activeHero < heroes.size() && !heroes[activeHero]->isAlive());
         if (activeHero < heroes.size()) beginTurn(*heroes[activeHero]);
         else { phase = Phase::DM_TURN; beginTurn(*dm); }
     } else {
         phase = Phase::MONSTER_ACTIONS;
+
+        // Apply Burn before monsters perform their queued attacks.
+        for (std::size_t i = 0; i < monsters.size(); i++) {
+            monsters[i]->processBurn();
+        }
+
+        checkWinner();
+
+        if (isFinished()) {
+            monsterActions.clear();
+            return;
+        }
 
         // Perform the attacks in the order the DM selected them.
         for (std::size_t i = 0; i < monsterActions.size(); i++) {
@@ -123,8 +226,12 @@ void Match::endTurn(Player& p) {
         monsterActions.clear();
 
         checkWinner();
-        if (isFinished()) return;
-        if (round >= maxRounds) { winner = Side::DUNGEON_MASTER; return; }
+        if (isFinished()){
+             return;
+        }
+        if (round >= maxRounds) { 
+            winner = Side::DUNGEON_MASTER; return; 
+        }
         phase = Phase::ROUND_START; ++round; activeHero = 0;
         while (!heroes[activeHero]->isAlive()) ++activeHero;
         phase = Phase::HERO_TURN; beginTurn(*heroes[activeHero]);
