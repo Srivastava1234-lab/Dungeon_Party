@@ -154,7 +154,7 @@ foreach(case_name deferred_damage order mana turn_authority invalid_targets inva
     add_test(NAME monster_card_${case_name} COMMAND monster_card_tests ${case_name})
 endforeach()
 
-# SCRUM-46: known healing regression is intentionally reported as failing.
+# SCRUM-46: healing amount, health cap and card restrictions.
 add_executable(healing_tests
         tests/healing_tests.cpp
         src/Card.cpp

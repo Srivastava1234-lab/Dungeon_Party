@@ -1,6 +1,6 @@
 # Sprint 2 testing status - Hulya
 
-All work stays on `hulya-Sprint2`. Local base: main `761618f`.
+All work stays on `hulya-Sprint2`. Local base: main `4bcbf34`.
 This is a local test and coordination record, not a Jira acceptance or completion claim.
 
 ## Commands
@@ -18,23 +18,11 @@ registered here; the result below is for the 33 registered tests only.
 
 ## Latest local result
 
-33 CTest cases: 28 passed, 5 failed. All failures expose the existing Hero::heal
-regression in main; production healing code was not changed. Failing tests remain
-enabled and are not marked as expected successes.
-
-| Test | Setup/action | Expected HP | Actual HP |
-|---|---|---:|---:|
-| healing_amount | 20/30 HP, heal 6 | 26 | 34 |
-| healing_max_cap | 25/30 HP, heal 10 | 30 | 40 |
-| healing_full_health | 30/30 HP, heal 5 | 30 | 55 |
-| healing_large_amount | 25/30 HP, heal INT_MAX | 30 | 25 |
-| healing_card_effect | 20/30 HP, healing card value 5 | 25 | 35 |
-
-The large-amount test also checks a maximum-health value of INT_MAX after the first
-check passes; this later check is currently not reached because the first one fails.
-Nonpositive healing and existing role/target restrictions pass. No rule about revival
-of defeated heroes was introduced. Tests use the current HEALER enum until the team's
-announced CLERK naming change reaches the shared code.
+All 33 registered CTest cases passed against main `4bcbf34`, including all
+seven healing tests. Five of these previously reproduced the healing regression
+against `761618f`. The updated game code now adds the requested amount and caps
+healing at maximum HP. No rule about revival of defeated heroes was introduced.
+Tests use the current HEALER enum.
 
 ## SCRUM-48: card file validation
 
@@ -52,7 +40,7 @@ unsupported cards, three-card limit, queue clearing, defeated participants and m
 termination. These test existing DM ATTACK cards; SUMMON/TRAP/DEFENSIVE gameplay is
 not claimed as covered or implemented. Confirm updated monster card rules with Kagan.
 
-Healing tests are prepared but await the healing fix (coordinate with Akshat/Kagan).
+All seven healing tests pass with the fix in main.
 Boss victory tests remain pending agreement on the final boss rule with Irma and
 alignment with Akshat's boss attack rules. SCRUM-46 is therefore incomplete.
 
