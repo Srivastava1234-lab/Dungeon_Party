@@ -93,19 +93,13 @@ int main()
         errorMessage = std::string("Could not load game data:\n") + e.what();
         std::cerr << errorMessage << "\n";
     }
-// the following lines can be removed once we do the second merge *****
-    std::vector<CardView> hand = {
-    {"Strike",     1, HeroEffect::ATTACK, 5},
-    {"Heavy blow", 5, HeroEffect::ATTACK, 14},
-    {"Heal",  2, HeroEffect::HEAL, 6}
-};
-// until here                                                    *****
 
     // Load every PNG once at startup. Heroes are keyed by hero id, monsters by name
     // (those are the values the Hero/Monster objects carry).
     std::map<std::string, GLuint> heroTextures;
     std::map<std::string, GLuint> monsterTextures;
     GLuint bgTexture = 0;
+    GLuint menuTexture = 0;
     int width = 0, height = 0;
     if (gameData)
     {
@@ -123,6 +117,8 @@ int main()
         }
     }
     LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &width, &height);
+    LoadTextureFromFile(projectPath("assets/Menu_Background_AI_Generated.png").c_str(), &menuTexture, &width, &height);
+
 
     auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) -> GLuint {
         auto it = textures.find(key);
@@ -130,8 +126,21 @@ int main()
     };
 
 
-    int selectedCard = -1; // nothing is selected
+    int selectedCard = -1;   // nothing is selected
+    char nameBuf[17] = "";   // player name, up to 16 characters
+    char codeBuf[7] = "";    // room code, 6 characters
+    bool showHelp = false;   
+    bool isHost = false;     // Only host can start the match
+
+    // FAKE DATA: until  server can send the code
+    std::string roomCode = "PLAYER";
+    std::vector<std::string> lobbyPlayers = {"Player 2","Player 3"};
+    // Ends here
+
+
+    // *****************************************************
     // Main loop clear screen to a color until window closed
+    // *****************************************************
     while (!glfwWindowShouldClose(window))
     {
         glClearColor(0.12f, 0.34f, 0.56f, 1.0f);
@@ -158,56 +167,179 @@ int main()
                 ImGui::SetWindowFontScale(1.0f);
                 ImGui::TextWrapped("%s", errorMessage.c_str());
             }
-            else if (ImGui::Button("Start match", ImVec2(-1, 70)))
+            else if (ImGui::Button("Menu", ImVec2(-1, 70)))
             {
-                try
-                {
-                    // 1. Load Level 1 definition from JSON using GameData
-                    LevelDefinition lvl1 = gameData->loadLevel(1);
-
-                    // 2. Initialize the Match object using level max rounds
-                    auto match = std::make_unique<Match>("match_1", lvl1.maxRounds);
-
-                    // 3. Load the default Heroes for Level 1 (e.g., Warrior)
-                    int heroCount = 0;
-                    for (const auto& heroId : lvl1.defaultHeroes)
-                    {
-                        const auto& heroDef = gameData->getHero(heroId);
-                        auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
-
-                        // TEMPORARY until task 15 fills the deck from heroes.json
-                        for (int i = 0; i < 10; ++i)
-                            loadedHero->addToDeck(std::make_unique<HeroCard>("Strike", 1, HeroEffect::ATTACK, 5));
-
-                        match->addPlayer(std::move(loadedHero));
-                        ++heroCount;
-                    }
-
-                    // 3.5. Create and add the Dungeon Master (Required by Match rules!)
-                    match->addPlayer(std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10));
-
-                    // 4. Load Level 1 Monsters from JSON: countPerHero x number of heroes (see data/README.md)
-                    for (const auto& monsterEntry : lvl1.monsters)
-                    {
-                        const auto& monsterDef = gameData->getMonster(monsterEntry.monsterId);
-                        for (int i = 0; i < monsterEntry.countPerHero * heroCount; ++i)
-                            match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
-                    }
-
-                    // 5. Start the match and switch to the battle screen
-                    match->start();
-                    currentMatch = std::move(match);
-                    screen = Screen::Battle;
-                }
-                catch (const std::exception& e)
-                {
-                    errorMessage = std::string("Could not start the match:\n") + e.what();
-                    std::cerr << errorMessage << "\n";
-                }
+                screen = Screen::Menu;
             }
             ImGui::End();
         }
-        else {
+
+         else if (screen == Screen::Menu)
+        {
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+            ImGui::Begin("Menu", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+
+            if (menuTexture != 0)
+            {
+                ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)menuTexture,
+                                                    ImVec2(0, 0), ImGui::GetIO().DisplaySize);
+            }
+
+            if(ImGui::Button("Back")){
+                screen = Screen::Start;
+            }
+            ImGui::SameLine(ImGui::GetWindowWidth() - 50);
+                if (ImGui::Button("?"))
+                {
+                    showHelp = !showHelp;
+                }
+            ImVec2 win = ImGui::GetIO().DisplaySize;
+            ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.2f));
+            ImGui::SetNextItemWidth(win.x * 0.3f);
+
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text,    ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
+            ImGui::InputTextWithHint("##name", "Your name", nameBuf, sizeof(nameBuf));
+            ImGui::PopStyleColor(2);
+            // A player can enter or create a lobby if the name field is not empty.
+            bool nameFilled = nameBuf[0] != '\0'; //Cstr ends with \0! so if the first char is that there is no name!
+            // Placing the widgets inside the empty box of the menuPic_AI_generated.png
+            
+            float panelW = win.x * 0.235f;
+            float panelH = win.y * 0.40f;
+            ImGui::SetCursorPos(ImVec2(win.x * 0.07f, win.y * 0.35f));
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.85f, 0.70f, 0.40f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.80f, 0.50f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.75f, 0.60f, 0.30f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg,       ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
+            // Left panel -- Hosting --
+            ImGui::BeginChild("Host", ImVec2(panelW,panelH), true);
+            ImGui::Text("HOST A PARTY");
+            ImGui::TextWrapped("Create a room and share its code with your friends.");
+
+            ImGui::BeginDisabled(!nameFilled);
+            if(ImGui::Button("New Adventure", ImVec2(-1,50))){
+                isHost = true;
+                screen = Screen::Lobby;
+            }
+            ImGui::EndDisabled();
+
+            ImGui::EndChild();
+
+            ImGui::SetCursorPos(ImVec2(win.x * 0.71f, win.y * 0.35f));
+
+            // Right panel -- Joining --
+            ImGui::BeginChild("Join", ImVec2(panelW,panelH), true);
+            ImGui::Text("Join A PARTY");
+            ImGui::TextWrapped("Enter the code you got from the host:");
+            ImGui::InputTextWithHint("##code", "Room code", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
+            ImGui::BeginDisabled(!nameFilled);
+            if(ImGui::Button("Join", ImVec2(-1, 50))){
+                isHost = false;
+                screen = Screen::Lobby;
+            }
+            ImGui::EndDisabled();
+            ImGui::EndChild();
+
+            ImGui::PopStyleColor(5); //every color needs to be popped from the stack to set a new one.
+
+            ImGui::End();
+            
+            // Help is TEMPORARY for now 
+            if (showHelp)
+            {
+                ImGui::Begin("Help", &showHelp);
+                ImGui::TextWrapped("Host a room to get a code and share it with your friends. "
+                                "Or enter a friend's code on the right to join their room.");
+                ImGui::End();
+            }
+        }
+        // Lobby screen 
+        else if (screen == Screen::Lobby){
+
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+            ImGui::Begin("Lobby", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+
+            if(ImGui::Button("Leave")){
+                screen = Screen::Menu;
+            }
+            ImGui::Text("Lobby");
+            ImGui::Text("Room code: %s", roomCode.c_str());
+            ImGui::Text("Players:");
+            ImGui::BulletText("%s ", nameBuf); // the name of the current player (you)
+            for (const auto& name : lobbyPlayers)
+                ImGui::BulletText("%s", name.c_str());
+
+            
+
+            if (isHost){
+
+                if (ImGui::Button("Start match", ImVec2(200, 40)))
+                {
+                    
+                    try
+                    {
+                        // 1. Load Level 1 definition from JSON using GameData
+                        LevelDefinition lvl1 = gameData->loadLevel(1);
+
+                        // 2. Initialize the Match object using level max rounds
+                        auto match = std::make_unique<Match>("match_1", lvl1.maxRounds);
+
+                        // 3. Load the default Heroes for Level 1 (e.g., Warrior)
+                        int heroCount = 0;
+                        for (const auto& heroId : lvl1.defaultHeroes)
+                        {
+                            const auto& heroDef = gameData->getHero(heroId);
+                            auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
+
+                            // TEMPORARY until task 15 fills the deck from heroes.json
+                            for (int i = 0; i < 10; ++i)
+                                loadedHero->addToDeck(std::make_unique<HeroCard>("Strike", 1, HeroEffect::ATTACK, 5));
+
+                            match->addPlayer(std::move(loadedHero));
+                            ++heroCount;
+                        }
+
+                        // 3.5. Create and add the Dungeon Master (Required by Match rules!)
+                        match->addPlayer(std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10));
+
+                        // 4. Load Level 1 Monsters from JSON: countPerHero x number of heroes (see data/README.md)
+                        for (const auto& monsterEntry : lvl1.monsters)
+                        {
+                            const auto& monsterDef = gameData->getMonster(monsterEntry.monsterId);
+                            for (int i = 0; i < monsterEntry.countPerHero * heroCount; ++i)
+                                match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
+                        }
+
+                        // 5. Start the match and switch to the battle screen
+                        match->start();
+                        currentMatch = std::move(match);
+                        screen = Screen::Battle;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        errorMessage = std::string("Could not start the match:\n") + e.what();
+                        std::cerr << errorMessage << "\n";
+                    }
+                }
+            }
+            else if(!isHost){
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Waiting for the host to start the match...");
+            }
+
+
+
+            ImGui::End();
+
+        }
+        // ****** Battle Screen ******
+        else if(screen == Screen::Battle){
             // Full-screen battle layout
             ImGui::SetNextWindowPos(ImVec2(0, 0));
             ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
