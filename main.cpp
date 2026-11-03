@@ -30,7 +30,26 @@ static std::string projectPath(const std::string& relative)
     return relative;
 #endif
 }
+// An enum cannot be printed using ImGui::text so we need to switch it to its equivalent str/char value
+static const char* roleName(LobbyRole role){
+    switch (role)
+    {
+    case LobbyRole::Warrior:
+        return "Warrior";
 
+    case LobbyRole::Healer:
+        return "Healer";
+
+    case LobbyRole::Wizard:
+        return "Wizard";
+    
+    case LobbyRole::DM:
+        return "DM";
+
+    default:
+        return "No Role";
+    }
+}
 int main()
 {
     if (!glfwInit())
@@ -100,6 +119,11 @@ int main()
     std::map<std::string, GLuint> monsterTextures;
     GLuint bgTexture = 0;
     GLuint menuTexture = 0;
+    GLuint warriorTexture = 0;
+    GLuint healerTexture = 0;
+    GLuint wizardTexture = 0;
+    GLuint dmTexture = 0;
+    
     int width = 0, height = 0;
     if (gameData)
     {
@@ -118,7 +142,29 @@ int main()
     }
     LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &width, &height);
     LoadTextureFromFile(projectPath("assets/Menu_Background_AI_Generated.png").c_str(), &menuTexture, &width, &height);
+    LoadTextureFromFile(projectPath("assets/Warrior_Artwork.png").c_str(), &warriorTexture, &width, &height);
+    LoadTextureFromFile(projectPath("assets/Healer_Artwork.png").c_str(), &healerTexture, &width, &height);
 
+    auto roleTexture = [&](LobbyRole role) -> GLuint {
+        switch(role){
+
+            case LobbyRole::Warrior:
+                return warriorTexture;
+
+            case LobbyRole::Healer:
+                return healerTexture;
+
+            case LobbyRole::Wizard:
+                return wizardTexture;
+            
+            case LobbyRole::DM:
+                return dmTexture;
+
+            default:
+                return 0;
+            }
+
+    };
 
     auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) -> GLuint {
         auto it = textures.find(key);
@@ -131,10 +177,12 @@ int main()
     char codeBuf[7] = "";    // room code, 6 characters
     bool showHelp = false;   
     bool isHost = false;     // Only host can start the match
+    LobbyPlayer cuurentPlayer = { nameBuf, LobbyRole::None};
+    
 
     // FAKE DATA: until  server can send the code
     std::string roomCode = "PLAYER";
-    std::vector<std::string> lobbyPlayers = {"Player 2","Player 3"};
+    std::vector<LobbyPlayer> lobbyPlayers = {{"Player2", LobbyRole::Healer}, {"Player 3", LobbyRole::DM}};
     // Ends here
 
 
@@ -224,6 +272,7 @@ int main()
             ImGui::BeginDisabled(!nameFilled);
             if(ImGui::Button("New Adventure", ImVec2(-1,50))){
                 isHost = true;
+                cuurentPlayer.name = nameBuf;
                 screen = Screen::Lobby;
             }
             ImGui::EndDisabled();
@@ -240,6 +289,7 @@ int main()
             ImGui::BeginDisabled(!nameFilled);
             if(ImGui::Button("Join", ImVec2(-1, 50))){
                 isHost = false;
+                cuurentPlayer.name = nameBuf;
                 screen = Screen::Lobby;
             }
             ImGui::EndDisabled();
@@ -272,12 +322,62 @@ int main()
             ImGui::Text("Lobby");
             ImGui::Text("Room code: %s", roomCode.c_str());
             ImGui::Text("Players:");
-            ImGui::BulletText("%s ", nameBuf); // the name of the current player (you)
-            for (const auto& name : lobbyPlayers)
-                ImGui::BulletText("%s", name.c_str());
+            // the name of the current player (you)
+            ImGui::BulletText("%s - %s", cuurentPlayer.name.c_str(), roleName(cuurentPlayer.role));
+            for (const auto& lb : lobbyPlayers)
+                ImGui::BulletText("%s - %s", lb.name.c_str(), roleName(lb.role));
 
             
 
+            bool dmTaken = false;
+            for (LobbyPlayer p : lobbyPlayers )
+            {
+                if(p.role == LobbyRole::DM ) {dmTaken = true; }
+            }
+            // ROLE CARDS (color, dm lock, pics)
+            LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Wizard, LobbyRole::Healer, LobbyRole::DM};
+            for (LobbyRole role : roles)
+            {
+                bool locked = (role == LobbyRole::DM && dmTaken);
+                bool chosen = (role == cuurentPlayer.role);
+                GLuint tex = roleTexture(role);
+                bool clicked = false;
+
+                ImGui::BeginDisabled(locked);
+
+                if (chosen)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
+                }
+
+                if (tex != 0)
+                {
+                    ImTextureID id = (ImTextureID)(intptr_t)tex;
+                    clicked = ImGui::ImageButton(roleName(role), id, ImVec2(120, 120));
+                }
+                else
+                {
+                    clicked = ImGui::Button(roleName(role), ImVec2(120, 120));
+                }
+
+                if (chosen)
+                {
+                    ImGui::PopStyleColor();
+                }
+
+                ImGui::EndDisabled();
+
+                if (clicked)
+                {
+                    cuurentPlayer.role = role;
+                }
+
+                ImGui::SameLine();
+            }
+
+            ImGui::NewLine();
+            
+            
             if (isHost){
 
                 if (ImGui::Button("Start match", ImVec2(200, 40)))
