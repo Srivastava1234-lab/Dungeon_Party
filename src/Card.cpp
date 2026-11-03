@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include "Monster.h"
 
 Card::Card(const std::string& n, int cost)
     : name(n),
@@ -30,6 +31,7 @@ bool HeroCard::canBePlayedBy(const Player& p) const {
 void HeroCard::applyEffect(Targetable& target) const {
     if (effect == HeroEffect::ATTACK || effect == HeroEffect::SPELL) {
         target.takeDamage(value);
+
     } else if (effect == HeroEffect::HEAL || effect == HeroEffect::SHIELD) {
         Hero* hero = dynamic_cast<Hero*>(&target);
 
@@ -46,6 +48,24 @@ void HeroCard::applyEffect(Targetable& target) const {
         } else {
             hero->addShield(value);
         }
+
+    } else if (effect == HeroEffect::FIREBALL) {
+        Monster* monster = dynamic_cast<Monster*>(&target);
+
+        if (monster == nullptr) {
+            throw std::invalid_argument("Fireball must target a monster");
+        }
+
+        if (!monster->isAlive()) {
+            throw std::invalid_argument("Cannot target a defeated monster");
+        }
+
+        monster->takeDamage(value);
+
+        if (monster->isAlive()) {
+            monster->applyBurn();
+        }
+
     } else {
         throw std::logic_error("This hero effect is not implemented yet");
     }

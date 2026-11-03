@@ -51,4 +51,23 @@ int Monster::getLevel() const {
     return level;
 }
 
+void Monster::applyBurn() {
+    if (!isAlive()) {
+        return;
+    }
 
+    burnTurnsRemaining = 2;
+}
+
+void Monster::processBurn() {
+    if (!isAlive() || burnTurnsRemaining <= 0) {
+        return;
+    }
+
+    takeDamage(2);
+    burnTurnsRemaining--;
+}
+
+int Monster::getBurnTurnsRemaining() const {
+    return burnTurnsRemaining;
+}

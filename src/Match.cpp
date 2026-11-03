@@ -181,13 +181,27 @@ void Match::checkWinner() {
 }
 
 void Match::endTurn(Player& p) {
-    if (getActivePlayer() != &p) throw std::invalid_argument("Not the active player");
+    if (getActivePlayer() != &p){
+        throw std::invalid_argument("Not the active player");
+    } 
     if (phase == Phase::HERO_TURN) {
         do { ++activeHero; } while (activeHero < heroes.size() && !heroes[activeHero]->isAlive());
         if (activeHero < heroes.size()) beginTurn(*heroes[activeHero]);
         else { phase = Phase::DM_TURN; beginTurn(*dm); }
     } else {
         phase = Phase::MONSTER_ACTIONS;
+
+        // Apply Burn before monsters perform their queued attacks.
+        for (std::size_t i = 0; i < monsters.size(); i++) {
+            monsters[i]->processBurn();
+        }
+
+        checkWinner();
+
+        if (isFinished()) {
+            monsterActions.clear();
+            return;
+        }
 
         // Perform the attacks in the order the DM selected them.
         for (std::size_t i = 0; i < monsterActions.size(); i++) {

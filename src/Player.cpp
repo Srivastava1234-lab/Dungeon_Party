@@ -67,7 +67,7 @@ void Player::playCard(const Card& card, Targetable& target) {
     bool damagingCard = false;
 
     if (heroCard != nullptr) {
-        if (heroCard->getEffect() == HeroEffect::ATTACK || heroCard->getEffect() == HeroEffect::SPELL) {
+        if (heroCard->getEffect() == HeroEffect::ATTACK || heroCard->getEffect() == HeroEffect::SPELL || heroCard->getEffect() == HeroEffect::FIREBALL) {
             damagingCard = true;
         }
     }
