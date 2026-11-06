@@ -10,7 +10,14 @@ class Monster : public Targetable {
     bool boss;
     int level;
     int burnTurnsRemaining = 0; 
+    bool frozen = false;
 public:
+    void freezeNextAttack() { frozen = !boss; }
+    bool skipFrozenAttack() {
+        const bool skip = frozen;
+        frozen = false;
+        return skip;
+    }
     Monster(std::string name, int health, bool boss = false, int level = 1);
     const std::string& getName() const;
     int getHealth() const;

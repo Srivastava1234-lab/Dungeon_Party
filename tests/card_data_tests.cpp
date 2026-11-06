@@ -65,7 +65,7 @@ void run(const std::string& name, const fs::path& source) {
     if (name == "valid_effects") {
         auto root = original;
         const json base = root["cards"][0];
-        for (const char* effect : {"ATTACK", "HEAL", "BUFF", "SPELL"}) {
+        for (const char* effect : {"ATTACK", "HEAL", "BUFF", "SPELL", "SHIELD"}) {
             auto card = base;
             card["id"] = std::string("hero_") + effect;
             // IDs must use lowercase letters.
@@ -73,9 +73,13 @@ void run(const std::string& name, const fs::path& source) {
             for (char& c : id) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
             card["id"] = id;
             card["effect"] = effect;
+            if (id == "hero_spell") {
+                card["target"] = "ONE_ENEMY";
+                card["freezeRounds"] = 1;
+            }
             root["cards"].push_back(card);
         }
-        for (const char* effect : {"SUMMON", "TRAP", "DEFENSIVE", "ATTACK"}) {
+        for (const char* effect : {"SUMMON", "TRAP", "DEFENSIVE", "ATTACK", "WEAKNESS"}) {
             auto card = base;
             std::string id = std::string("dm_") + effect;
             for (char& c : id) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
@@ -85,12 +89,14 @@ void run(const std::string& name, const fs::path& source) {
         }
         fixture.write("cards.json", root);
         const GameData data(fixture.folder.string());
-        check(data.getCards().size() == original["cards"].size() + 8, "Cards lost while loading");
+        check(data.getCards().size() == original["cards"].size() + 10, "Cards lost while loading");
         const auto& attack = data.getCard("dm_attack");
         check(attack.side == Side::DUNGEON_MASTER && attack.dmEffect == DMEffect::ATTACK &&
               !attack.heroEffect && attack.manaCost == 0 && attack.value == INT_MAX,
               "DM attack data was not preserved");
-        check(data.getCard("hero_spell").heroEffect == HeroEffect::SPELL, "Spell effect lost");
+        const auto& spell = data.getCard("hero_spell");
+        check(spell.heroEffect == HeroEffect::SPELL && spell.target == SpellTarget::ONE_ENEMY &&
+              spell.freezeRounds == 1, "Spell fields were not preserved");
     } else if (name == "missing_file") {
         fs::remove(fixture.folder / "cards.json");
         fixture.rejects("cards.json", "cannot open");

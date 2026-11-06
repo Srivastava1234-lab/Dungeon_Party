@@ -25,6 +25,23 @@ void Match::addMonster(std::unique_ptr<Monster> m) {
     monsters.push_back(std::move(m));
 }
 
+void Match::configureBoss(std::unique_ptr<Monster> boss, int arrivalRound, int attackPower) {
+    if (started || pendingBoss || !boss || !boss->isBoss() ||
+        arrivalRound < 1 || arrivalRound > maxRounds || attackPower < 0) {
+        throw std::invalid_argument("Invalid final boss configuration");
+    }
+    bossAttack.emplace("Boss attack", 0, DMEffect::ATTACK, attackPower);
+    pendingBoss = std::move(boss);
+    bossArrivalRound = arrivalRound;
+}
+
+void Match::spawnBoss() {
+    if (pendingBoss && round == bossArrivalRound) {
+        finalBoss = pendingBoss.get();
+        monsters.push_back(std::move(pendingBoss));
+    }
+}
+
 void Match::start() {
     if (started) throw std::logic_error("Match already started");
     heroes.clear(); dm = nullptr;
@@ -47,6 +64,7 @@ void Match::start() {
 
     started = true;
     round = 1;
+    spawnBoss();
     activeHero = 0;
     phase = Phase::HERO_TURN;
 
@@ -147,6 +165,10 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     }
     for (const auto& m : monsters){
         if (m.get() == &t && m->isAlive()) {
+            if (hc->getEffect() == HeroEffect::SPELL &&
+                hc->getTarget() == SpellTarget::BOSS_ONLY && !m->isBoss()) {
+                return fail("This spell requires the boss");
+            }
             return {true, std::nullopt};
         }
     } 
@@ -162,12 +184,27 @@ void Match::apply(const Card& c, Targetable& t) {
     if (!check.valid){
         throw std::invalid_argument(check.reason.value());
     } 
-    p->playCard(c, t); checkWinner();
+    std::vector<Targetable*> targets;
+    const auto* spell = dynamic_cast<const HeroCard*>(&c);
+    if (spell && spell->getEffect() == HeroEffect::SPELL &&
+        spell->getTarget() == SpellTarget::ALL_ENEMIES) {
+        for (const auto& monster : monsters) {
+            if (monster->isAlive()) targets.push_back(monster.get());
+        }
+    } else {
+        targets.push_back(&t);
+    }
+    p->playCard(c, targets);
+    checkWinner();
 }
 
 void Match::checkWinner() {
     if (std::none_of(heroes.begin(), heroes.end(), [](const auto* h){ return h->isAlive(); })) {
         winner = Side::DUNGEON_MASTER; return;
+    }
+    if (pendingBoss || finalBoss) {
+        if (finalBoss && !finalBoss->isAlive()) winner = Side::HEROES;
+        return;
     }
     bool hadBoss = false, livingBoss = false, livingMonster = false;
     for (const auto& m : monsters) {
@@ -212,6 +249,8 @@ void Match::endTurn(Player& p) {
                 continue;
             }
 
+            if (action.monster->skipFrozenAttack()) continue;
+
             action.monster->attack(*action.card, *action.target);
 
             // Stop immediately if the attack ends the match.
@@ -219,6 +258,15 @@ void Match::endTurn(Player& p) {
 
             if (isFinished()) {
                 break;
+            }
+        }
+
+        if (!isFinished() && finalBoss && finalBoss->isAlive()) {
+            const auto target = std::find_if(heroes.begin(), heroes.end(),
+                                             [](const Hero* hero) { return hero->isAlive(); });
+            if (target != heroes.end()) {
+                finalBoss->attack(*bossAttack, **target);
+                checkWinner();
             }
         }
 
@@ -233,6 +281,7 @@ void Match::endTurn(Player& p) {
             winner = Side::DUNGEON_MASTER; return; 
         }
         phase = Phase::ROUND_START; ++round; activeHero = 0;
+        spawnBoss();
         while (!heroes[activeHero]->isAlive()) ++activeHero;
         phase = Phase::HERO_TURN; beginTurn(*heroes[activeHero]);
     }
@@ -259,6 +308,9 @@ std::optional<Side> Match::getWinner() const {
 }
 
 void Match::queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target) {
+    if (&monster == finalBoss) {
+        throw std::invalid_argument("The final boss attacks automatically");
+    }
     // Only the active DM can give monster orders.
     if (!started || isFinished()) {
         throw std::logic_error("Match is not active");

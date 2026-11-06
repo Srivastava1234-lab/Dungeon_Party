@@ -1,5 +1,5 @@
 {
-  "_note": "Monster definitions (SCRUM-5). Sprint 1 has no boss monster. Entries with \"temporary\": true are not confirmed as final yet.",
+  "_note": "Monster definitions. Entries with temporary set to true are draft values.",
   "monsters": [
     {
       "id": "goblin",
@@ -10,6 +10,15 @@
       "image": "assets/Monster_Artwork.png",
       "temporary": true,
       "_note": "maxHealth 100 and attackPower 15 come from the Sprint 1 requirements (team chat, 23.10.2026). The image is the monster artwork in assets/."
+    },
+    {
+      "id": "final_boss",
+      "name": "Final Boss",
+      "healthPerHero": 80,
+      "attackPower": 20,
+      "boss": true,
+      "image": "assets/Final_Boss_Artwork.png",
+      "temporary": true
     }
   ]
 }

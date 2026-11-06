@@ -186,6 +186,7 @@ HeroEffect toHeroEffect(const std::string& text, const std::string& where) {
     if (text == "HEAL") return HeroEffect::HEAL;
     if (text == "BUFF") return HeroEffect::BUFF;
     if (text == "SPELL") return HeroEffect::SPELL;
+    if (text == "SHIELD") return HeroEffect::SHIELD;
     fail(where, "unknown effect \"" + text + "\" for a HEROES card (allowed: ATTACK, HEAL, BUFF, SPELL)");
 }
 
@@ -194,6 +195,7 @@ DMEffect toDMEffect(const std::string& text, const std::string& where) {
     if (text == "TRAP") return DMEffect::TRAP;
     if (text == "DEFENSIVE") return DMEffect::DEFENSIVE;
     if (text == "ATTACK") return DMEffect::ATTACK;
+    if (text == "WEAKNESS") return DMEffect::WEAKNESS;
     fail(where, "unknown effect \"" + text + "\" for a DUNGEON_MASTER card (allowed: SUMMON, TRAP, DEFENSIVE, ATTACK)");
 }
 
@@ -267,6 +269,18 @@ void GameData::loadCards() {
             card.dmEffect = toDMEffect(effect, where);
         }
 
+        if (card.heroEffect == HeroEffect::SPELL) {
+            if (entry.contains("target")) {
+                const auto target = readText(entry, "target", where);
+                if (target == "ALL_ENEMIES") card.target = SpellTarget::ALL_ENEMIES;
+                else if (target == "BOSS_ONLY") card.target = SpellTarget::BOSS_ONLY;
+                else if (target != "ONE_ENEMY") throw std::runtime_error(where + ": unknown spell target");
+            }
+            if (entry.contains("freezeRounds")) {
+                card.freezeRounds = readNumber(entry, "freezeRounds", 0, where);
+                if (card.freezeRounds > 1) throw std::runtime_error(where + ": freezeRounds must be 0 or 1");
+            }
+        }
         card.manaCost = readNumber(entry, "manaCost", 0, where);
         card.value = readNumber(entry, "value", 0, where);
         card.description = readText(entry, "description", where);
@@ -343,9 +357,13 @@ void GameData::loadMonsters() {
         }
 
         monster.name = readText(entry, "name", where);
-        monster.maxHealth = readNumber(entry, "maxHealth", 1, where);
         monster.attackPower = readNumber(entry, "attackPower", 0, where);
         monster.boss = readTrueFalse(entry, "boss", where);   // UML Monster.boss, not the DM role
+        if (monster.boss) {
+            monster.healthPerHero = readNumber(entry, "healthPerHero", 1, where);
+        } else {
+            monster.maxHealth = readNumber(entry, "maxHealth", 1, where);
+        }
         monster.image = readImagePath(entry, where);
         monster.temporary = readTrueFalse(entry, "temporary", where);
 
@@ -414,6 +432,17 @@ LevelDefinition GameData::loadLevel(int number) const {
             fail(where, "unknown monster \"" + line.monsterId + "\" (not found in monsters.json)");
         }
         level.monsters.push_back(line);
+    }
+
+    if (root.contains("boss")) {
+        const auto& boss = root.at("boss");
+        requireObject(boss, fileName + ", boss");
+        level.bossId = readText(boss, "monster", fileName);
+        level.bossArrivalRound = readNumber(boss, "arrivalRound", 1, fileName);
+        const auto* definition = findMonster(level.bossId);
+        if (!definition || !definition->boss || level.bossArrivalRound > level.maxRounds) {
+            fail(fileName, "invalid boss definition or arrival round");
+        }
     }
 
     level.temporary = readTrueFalse(root, "temporary", fileName);

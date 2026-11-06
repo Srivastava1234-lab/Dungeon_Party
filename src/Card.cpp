@@ -16,8 +16,8 @@ Card::Card(const std::string& n, int cost)
         } 
     }
 
-HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v) 
-    : Card(std::move(n), c), effect(e), value(v){
+HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, SpellTarget target, int freezeRounds)
+    : Card(std::move(n), c), effect(e), value(v), target(target), freezeRounds(freezeRounds){
         if (v < 0){
             throw std::invalid_argument("negative effect value");
         }
@@ -30,7 +30,15 @@ bool HeroCard::canBePlayedBy(const Player& p) const {
 
 void HeroCard::applyEffect(Targetable& target) const {
     if (effect == HeroEffect::ATTACK || effect == HeroEffect::SPELL) {
+        auto* monster = dynamic_cast<Monster*>(&target);
+        if (effect == HeroEffect::SPELL && this->target == SpellTarget::BOSS_ONLY &&
+            (!monster || !monster->isBoss())) {
+            throw std::invalid_argument("This spell requires the boss");
+        }
         target.takeDamage(value);
+        if (effect == HeroEffect::SPELL && freezeRounds == 1 && monster && monster->isAlive()) {
+            monster->freezeNextAttack();
+        }
 
     } else if (effect == HeroEffect::HEAL || effect == HeroEffect::SHIELD) {
         Hero* hero = dynamic_cast<Hero*>(&target);

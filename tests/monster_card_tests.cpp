@@ -1,5 +1,6 @@
 #include "Match.h"
 #include "DMCard.h"
+#include "HeroCard.h"
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -19,7 +20,8 @@ struct Battle {
     Hero* otherHero = nullptr;
     DungeonMaster* dm;
     Monster* monster;
-    explicit Battle(int mana = 10, bool secondHero = false) {
+    Monster* reserve;
+    explicit Battle(int mana = 10, bool secondHero = false, bool reserveIsBoss = false) {
         auto h = std::make_unique<Hero>("hero", "Warrior", HeroType{HeroClass::WARRIOR, 30}, 10);
         hero = h.get(); match.addPlayer(std::move(h));
         if (secondHero) {
@@ -35,7 +37,9 @@ struct Battle {
         match.addPlayer(std::move(d));
         auto m = std::make_unique<Monster>("Goblin", 20);
         monster = m.get(); match.addMonster(std::move(m));
-        match.addMonster(std::make_unique<Monster>("Reserve", 20));
+        auto r = std::make_unique<Monster>("Reserve", reserveIsBoss ? 30 : 20, reserveIsBoss);
+        reserve = r.get();
+        match.addMonster(std::move(r));
         match.start();
     }
     void dmTurn() {
@@ -68,7 +72,64 @@ const Card& addObserved(Battle& b, std::vector<int>& log, int id, int damage = 1
 }
 
 void run(const std::string& name) {
-    if (name == "deferred_damage") {
+    if (name == "scheduled_boss") {
+        Match match("scheduled-boss", 8);
+        auto hero = std::make_unique<Hero>("hero", "Hero", HeroType{HeroClass::WARRIOR, 101}, 50);
+        auto* h = hero.get();
+        match.addPlayer(std::move(hero));
+        match.addPlayer(std::make_unique<DungeonMaster>("dm", "DM", 10));
+        auto goblin = std::make_unique<Monster>("Goblin", 10);
+        auto* g = goblin.get();
+        match.addMonster(std::move(goblin));
+        match.configureBoss(std::make_unique<Monster>("Boss", 80, true), 4, 20);
+        match.start();
+        h->addToDeck(std::make_unique<HeroCard>("Strike", 0, HeroEffect::ATTACK, 10));
+        match.apply(*h->drawCard(), *g);
+        for (int round = 1; round <= 8; ++round) {
+            check(!match.isFinished() && match.getRound() == round, "Round ended prematurely");
+            check(match.getMonsters().size() == (round < 4 ? 1u : 2u), "Incorrect boss arrival");
+            match.endTurn(*match.getActivePlayer());
+            match.endTurn(*match.getActivePlayer());
+            check(h->getHealth() == 101 - 20 * (round < 4 ? 0 : round - 3),
+                  "Boss must attack exactly once each monster turn after arriving");
+        }
+        check(match.getWinner() == Side::DUNGEON_MASTER, "Living boss must win after round eight");
+    } else if (name == "spell_targets") {
+        Battle b(10, false, true);
+        b.hero->addToDeck(std::make_unique<HeroCard>(
+            "Fireball", 2, HeroEffect::SPELL, 6, SpellTarget::ALL_ENEMIES));
+        b.match.apply(*b.hero->drawCard(), *b.monster);
+        check(b.monster->getHealth() == 14 && b.reserve->getHealth() == 24,
+              "Fireball must hit both living enemies");
+        check(b.hero->getMana() == 8 && b.hero->getDiscardSize() == 1 &&
+              b.hero->getCardsPlayedThisTurn() == 1, "Fireball must be paid for once");
+        b.hero->addToDeck(std::make_unique<HeroCard>(
+            "Holy Lance", 3, HeroEffect::SPELL, 25, SpellTarget::BOSS_ONLY));
+        const Card& lance = *b.hero->drawCard();
+        rejects<std::invalid_argument>([&] { b.match.apply(lance, *b.monster); });
+        check(b.hero->getMana() == 8, "An invalid spell target must not cost mana");
+        b.match.apply(lance, *b.reserve);
+        check(b.match.getWinner() == Side::HEROES && b.monster->isAlive(),
+              "Defeating the boss must win even with a regular monster alive");
+    } else if (name == "frost_bolt") {
+        Battle b(10, false, true);
+        for (Monster* target : {b.monster, b.reserve}) {
+            b.hero->addToDeck(std::make_unique<HeroCard>(
+                "Frost Bolt", 2, HeroEffect::SPELL, 5, SpellTarget::ONE_ENEMY, 1));
+            b.match.apply(*b.hero->drawCard(), *target);
+        }
+        check(b.monster->getHealth() == 15 && b.reserve->getHealth() == 25,
+              "Frost Bolt must damage both regular monsters and the boss");
+        b.dmTurn();
+        b.queue();
+        b.match.queueMonsterAttack(*b.dm, *b.reserve, b.dm->getHandCard(0), *b.hero);
+        b.match.endTurn(*b.dm);
+        check(b.hero->getHealth() == 24, "Only the boss should attack while the monster is frozen");
+        b.dmTurn();
+        b.queue();
+        b.match.endTurn(*b.dm);
+        check(b.hero->getHealth() == 18, "The monster must resume attacking after one skip");
+    } else if (name == "deferred_damage") {
         Battle b; b.dmTurn();
         const Card* card = &b.dm->getHandCard(0);
         b.queue();

@@ -6,8 +6,13 @@
 class HeroCard : public Card {
     HeroEffect effect;
     int value;
+    SpellTarget target;
+    int freezeRounds;
 public:
-    HeroCard(std::string name, int cost, HeroEffect effect, int value);
+    HeroCard(std::string name, int cost, HeroEffect effect, int value,
+             SpellTarget target = SpellTarget::ONE_ENEMY, int freezeRounds = 0);
+    SpellTarget getTarget() const { return target; }
+    int getFreezeRounds() const { return freezeRounds; }
     HeroEffect getEffect() const;
     int getValue() const;
     bool canBePlayedBy(const Player& player) const override;

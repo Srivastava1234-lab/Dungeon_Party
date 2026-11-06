@@ -12,6 +12,7 @@
 #include <iostream>
 #include "Renderer.h"
 #include "GameData.h"
+#include <limits>
 #include "Match.h"
 #include "Hero.h"
 #include "HeroCard.h"
@@ -298,9 +299,14 @@ int main()
                             const auto& heroDef = gameData->getHero(heroId);
                             auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
 
-                            // TEMPORARY until task 15 fills the deck from heroes.json
-                            for (int i = 0; i < 10; ++i)
-                                loadedHero->addToDeck(std::make_unique<HeroCard>("Strike", 1, HeroEffect::ATTACK, 5));
+                            for (const auto& entry : heroDef.startingDeck) {
+                                const auto& card = gameData->getCard(entry.cardId);
+                                for (int i = 0; i < entry.count; ++i) {
+                                    loadedHero->addToDeck(std::make_unique<HeroCard>(
+                                        card.name, card.manaCost, card.heroEffect.value(), card.value,
+                                        card.target, card.freezeRounds));
+                                }
+                            }
 
                             match->addPlayer(std::move(loadedHero));
                             ++heroCount;
@@ -315,6 +321,16 @@ int main()
                             const auto& monsterDef = gameData->getMonster(monsterEntry.monsterId);
                             for (int i = 0; i < monsterEntry.countPerHero * heroCount; ++i)
                                 match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
+                        }
+
+                        if (!lvl1.bossId.empty()) {
+                            const auto& boss = gameData->getMonster(lvl1.bossId);
+                            if (heroCount == 0 || boss.healthPerHero > std::numeric_limits<int>::max() / heroCount) {
+                                throw std::invalid_argument("Invalid final boss health");
+                            }
+                            match->configureBoss(
+                                std::make_unique<Monster>(boss.name, boss.healthPerHero * heroCount, true),
+                                lvl1.bossArrivalRound, boss.attackPower);
                         }
 
                         // 5. Start the match and switch to the battle screen

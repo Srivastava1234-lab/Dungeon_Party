@@ -150,7 +150,7 @@ add_executable(monster_card_tests
         src/Trap.cpp
 )
 target_include_directories(monster_card_tests PRIVATE include)
-foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end)
+foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end spell_targets frost_bolt scheduled_boss)
     add_test(NAME monster_card_${case_name} COMMAND monster_card_tests ${case_name})
 endforeach()
 
