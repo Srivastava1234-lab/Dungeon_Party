@@ -18,6 +18,7 @@
 #include "Monster.h"
 #include "DungeonMaster.h"
 #include "TurnIndicator.h"
+#include "GameState.h"
 
 // Asset paths in the data files are relative to the project folder (e.g. "assets/Warrior_Artwork.png").
 // CMake passes the absolute project folder in, so the game finds its files no matter which
@@ -127,6 +128,8 @@ int main()
 
 
     int selectedCard = -1;   // nothing is selected
+    GameState state;         // what the battle screen draws; the server will send it later
+    const DungeonMaster* dmView = nullptr;   // TEMPORARY: lets us read the DM's mana from the local match
     char nameBuf[17] = "";   // player name, up to 16 characters
     char codeBuf[7] = "";    // room code, 6 characters
     bool showHelp = false;   
@@ -307,7 +310,9 @@ int main()
                         }
 
                         // 3.5. Create and add the Dungeon Master (Required by Match rules!)
-                        match->addPlayer(std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10));
+                        auto dmPlayer = std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10);
+                        dmView = dmPlayer.get();
+                        match->addPlayer(std::move(dmPlayer));
 
                         // 4. Load Level 1 Monsters from JSON: countPerHero x number of heroes (see data/README.md)
                         for (const auto& monsterEntry : lvl1.monsters)
@@ -348,6 +353,11 @@ int main()
 
             if (currentMatch)
             {
+                // TEMPORARY: until the server sends the state, build it from the local match
+                // and send it through JSON once. With the network this line is deleted.
+                state = gameStateFromJson(gameStateToJson(
+                    makeGameState(*currentMatch, *dmView, currentMatch->getActivePlayer())));
+
                 // 1. TOP BAR: Status & Round Info
                 ImGui::BeginChild("TopStatusBar", ImVec2(0, 40), true);
                 if (auto* active = currentMatch->getActivePlayer()) {
@@ -376,50 +386,48 @@ int main()
 
                 Player* active = currentMatch->getActivePlayer();
                 // Render all active heroes on the left side
-                const auto& matchHeroes = currentMatch->getHeroes();
-                for (size_t i = 0; i < matchHeroes.size(); ++i)
+                for (size_t i = 0; i < state.heroes.size(); ++i)
                 {
                     if (i > 0) ImGui::SameLine();
-                    Hero* h = matchHeroes[i];
-                    if (h)
-                    {
-                        Character heroChar{
-                            h->getName(),
-                            h->getHealth(),
-                            h->getType().maxHealth,
-                            h->getMana(),
-                            h->getMaxMana(),
-                            textureOr0(heroTextures, h->getPlayerId())
-                        };
-                        drawCharacter(heroChar);
-                    }
+                    const HeroState& h = state.heroes[i];
+                    Character heroChar{
+                        h.name,
+                        h.health,
+                        h.maxHealth,
+                        h.mana,
+                        h.maxMana,
+                        textureOr0(heroTextures, h.id)
+                    };
+                    drawCharacter(heroChar);
                 }
 
                 ImGui::SameLine(400); // Space between hero and monster
 
                 // Render all monsters on the right side
-                const auto& matchMonsters = currentMatch->getMonsters();
+                const auto& matchMonsters = currentMatch->getMonsters();   // TEMPORARY: only used for apply below
                 int drawn = 0; // to count how many monsters are drawned
-                for (size_t i = 0; i < matchMonsters.size(); ++i)
+                for (size_t i = 0; i < state.monsters.size(); ++i)
                 {
-                    const auto& m = matchMonsters[i];
-                    if (!m || !m->isAlive()) continue; // to skip the dead monsters
+                    const MonsterState& m = state.monsters[i];
+                    if (!m.alive) continue; // to skip the dead monsters
 
                     if (drawn > 0) ImGui::SameLine();
                     drawn++;
 
                     Character monsterChar{
-                        m->getName(),
-                        m->getHealth(),
-                        m->getMaxHealth(),
+                        m.name,
+                        m.health,
+                        m.maxHealth,
                         0, 0,
-                        textureOr0(monsterTextures, m->getName())
+                        textureOr0(monsterTextures, m.name)
                     };
 
                     if (drawCharacter(monsterChar) && selectedCard >= 0 && active)
                     {
                         try {
-                            currentMatch->apply(active->getHandCard(selectedCard), *m);
+                            // TEMPORARY: same index in the state and in the match. With the
+                            // server this becomes a request: card index + monster index.
+                            currentMatch->apply(active->getHandCard(selectedCard), *matchMonsters[i]);
                         }
                         catch (const std::exception& e) {
                             std::cerr << e.what() << "\n";
@@ -431,28 +439,18 @@ int main()
                 ImGui::EndChild();
 
                 // Current mana of the active hero, used to decide which cards can be played
-                int heroMana = 0;
-                if (!matchHeroes.empty() && matchHeroes[0])
-                    heroMana = matchHeroes[0]->getMana();
+                int heroMana = state.heroes.empty() ? 0 : state.heroes[0].mana;
 
                 // 3. BOTTOM TRAY: Card Hand & Deck Selection
                 ImGui::BeginChild("CardTray", ImVec2(0, 0), true);
 
                 float rowY = ImGui::GetCursorPosY() + 15.0f;
 
-                if (active)
                 {
-                    for (std::size_t i = 0; i < active->getHandSize(); i++)
+                    for (std::size_t i = 0; i < state.myHand.size(); i++)
                     {
-                        const Card& card = active->getHandCard(i);
-                        const HeroCard* hc = dynamic_cast<const HeroCard*>(&card);
-
-                        CardView view{
-                            card.getName(),
-                            card.getManaCost(),
-                            hc ? hc->getEffect() : HeroEffect::ATTACK,
-                            hc ? hc->getValue() : 0
-                        };
+                        const CardState& c = state.myHand[i];
+                        CardView view{ c.name, c.manaCost, c.effect, c.value };
 
                         if (i > 0) ImGui::SameLine();
                         // to distinguish the selected card
