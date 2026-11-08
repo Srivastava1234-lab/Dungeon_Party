@@ -14,6 +14,10 @@
 #include <random>
 #include <string>
 
+#ifdef ERROR
+#undef ERROR
+#endif
+
 namespace net {
 
 constexpr std::uint16_t DEFAULT_PORT = 7777;

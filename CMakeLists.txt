@@ -71,66 +71,7 @@ target_compile_definitions(game_data PRIVATE
         DUNGEON_PARTY_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
 )
 
-#Add all source files
-add_executable(${PROJECT_NAME}
-        main.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Renderer.cpp
-        src/Trap.cpp
-        include/stb_image.h
-)
-
-target_link_libraries(${PROJECT_NAME} PRIVATE
-        glfw
-        glm::glm
-        glad_lib
-        game_data
-        imgui
-)
-
-# validate_data Tool & Tests (SCRUM-5)
-
-add_executable(console_game
-        console_main.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Trap.cpp
-)
-target_link_libraries(console_game PRIVATE game_data)
-
-add_executable(validate_data
-        tools/validate_data.cpp
-)
-target_link_libraries(validate_data PRIVATE game_data)
-
-enable_testing()
-add_test(NAME data_validation COMMAND validate_data)
-# SCRUM-21: current combat behavior; DM attack rules remain outside this suite.
-add_executable(combat_tests
-        tests/combat_tests.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Trap.cpp
-)
-target_include_directories(combat_tests PRIVATE include)
-foreach(case_name attack_damage invalid_targets monster_damage victory round_limit)
-    add_test(NAME combat_${case_name} COMMAND combat_tests ${case_name})
-endforeach()
-
-# ===================== Online play (Sprint 2 prototype) =====================
+# ===================== Online play & Game Logic Libraries =====================
 
 # ENet: small reliable-UDP networking library
 FetchContent_Declare(
@@ -141,10 +82,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(enet)
 target_include_directories(enet PUBLIC ${enet_SOURCE_DIR}/include)
 if(WIN32)
-    target_link_libraries(enet PUBLIC ws2_32 winmm)
+    target_link_libraries(enet ws2_32 winmm)
 endif()
 
-# The game rules as one library, shared by the server and the network tests
+# The game rules as one library, shared by the game, server, and tests
 add_library(game_logic STATIC
         src/Card.cpp
         src/DungeonMaster.cpp
@@ -156,26 +97,60 @@ add_library(game_logic STATIC
 )
 target_include_directories(game_logic PUBLIC include)
 
-# Client-side networking (used by the online game window)
+# Client-side networking
 add_library(net_client STATIC net/NetClient.cpp)
 target_include_directories(net_client PUBLIC net)
 target_link_libraries(net_client PUBLIC enet nlohmann_json::nlohmann_json)
 
-# Room logic as a library, so the server program and the tests use the same code
+# Room logic as a library (embedded directly into the game for Listen Server hosting!)
 add_library(room_server STATIC server/RoomServer.cpp)
 target_include_directories(room_server PUBLIC server)
 target_link_libraries(room_server PUBLIC enet nlohmann_json::nlohmann_json game_logic game_data)
 
-# Headless server: run this on a machine everyone can reach (e.g. a cloud VM)
+# Main Unified Game Executable (Local + Listen Server Host + Online Join)
+add_executable(${PROJECT_NAME}
+        main.cpp
+        src/Renderer.cpp
+        include/stb_image.h
+)
+target_link_libraries(${PROJECT_NAME} PRIVATE
+        net_client
+        room_server
+        game_data
+        game_logic
+        glfw
+        glm::glm
+        glad_lib
+        imgui
+)
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+        DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+# Optional standalone executables & tests
+add_executable(console_game console_main.cpp)
+target_link_libraries(console_game PRIVATE game_logic game_data)
+
+add_executable(validate_data tools/validate_data.cpp)
+target_link_libraries(validate_data PRIVATE game_data)
+
+enable_testing()
+add_test(NAME data_validation COMMAND validate_data)
+
+add_executable(combat_tests tests/combat_tests.cpp)
+target_include_directories(combat_tests PRIVATE include)
+target_link_libraries(combat_tests PRIVATE game_logic)
+foreach(case_name attack_damage invalid_targets monster_damage victory round_limit)
+    add_test(NAME combat_${case_name} COMMAND combat_tests ${case_name})
+endforeach()
+
 add_executable(dungeon_server server/server_main.cpp)
 target_link_libraries(dungeon_server PRIVATE room_server)
 
-# Online client: host a room or join one with a code
 add_executable(dungeon_online online_main.cpp src/Renderer.cpp)
-target_link_libraries(dungeon_online PRIVATE net_client game_data game_logic glfw glad_lib imgui)
+target_link_libraries(dungeon_online PRIVATE net_client room_server game_data game_logic glfw glad_lib imgui)
 target_compile_definitions(dungeon_online PRIVATE DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
-# Real server + real clients over localhost
 add_executable(net_tests tests/net_tests.cpp)
 target_link_libraries(net_tests PRIVATE room_server net_client)
 add_test(NAME network COMMAND net_tests)
