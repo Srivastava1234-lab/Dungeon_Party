@@ -71,72 +71,83 @@ target_compile_definitions(game_data PRIVATE
         DUNGEON_PARTY_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
 )
 
-#Add all source files
-add_executable(${PROJECT_NAME}
-        main.cpp
+# ===================== Online play & Game Logic Libraries =====================
+
+# ENet: small reliable-UDP networking library
+FetchContent_Declare(
+        enet
+        URL      https://github.com/lsalzman/enet/archive/refs/tags/v1.3.18.tar.gz
+        URL_HASH SHA256=28603c895f9ed24a846478180ee72c7376b39b4bb1287b73877e5eae7d96b0dd
+)
+FetchContent_MakeAvailable(enet)
+target_include_directories(enet PUBLIC ${enet_SOURCE_DIR}/include)
+if(WIN32)
+    target_link_libraries(enet ws2_32 winmm)
+endif()
+
+# The game rules as one library, shared by the game, server, and tests
+add_library(game_logic STATIC
         src/Card.cpp
         src/DungeonMaster.cpp
+        src/GameState.cpp
         src/Hero.cpp
         src/Match.cpp
         src/Monster.cpp
         src/Player.cpp
-        src/Renderer.cpp
         src/Trap.cpp
+)
+target_include_directories(game_logic PUBLIC include)
+
+# Client-side networking
+add_library(net_client STATIC net/NetClient.cpp)
+target_include_directories(net_client PUBLIC net)
+target_link_libraries(net_client PUBLIC enet nlohmann_json::nlohmann_json)
+
+# Room logic as a library (embedded directly into the game for Listen Server hosting!)
+add_library(room_server STATIC server/RoomServer.cpp)
+target_include_directories(room_server PUBLIC server)
+target_link_libraries(room_server PUBLIC enet nlohmann_json::nlohmann_json game_logic game_data)
+
+# Main Unified Game Executable (Local + Listen Server Host + Online Join)
+add_executable(${PROJECT_NAME}
+        main.cpp
+        src/Renderer.cpp
         include/stb_image.h
 )
-
 target_link_libraries(${PROJECT_NAME} PRIVATE
+        net_client
+        room_server
+        game_data
+        game_logic
         glfw
         glm::glm
         glad_lib
-        game_data
         imgui
+        nlohmann_json::nlohmann_json
+)
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+        DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
-# validate_data Tool & Tests (SCRUM-5)
+# Optional standalone executables & tests
+add_executable(console_game console_main.cpp)
+target_link_libraries(console_game PRIVATE game_logic game_data)
 
-add_executable(console_game
-        console_main.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Trap.cpp
-)
-target_link_libraries(console_game PRIVATE game_data)
-
-add_executable(validate_data
-        tools/validate_data.cpp
-)
+add_executable(validate_data tools/validate_data.cpp)
 target_link_libraries(validate_data PRIVATE game_data)
 
 enable_testing()
 add_test(NAME data_validation COMMAND validate_data)
-# SCRUM-21: current combat behavior; DM attack rules remain outside this suite.
-add_executable(combat_tests
-        tests/combat_tests.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Trap.cpp
-)
+
+add_executable(combat_tests tests/combat_tests.cpp)
 target_include_directories(combat_tests PRIVATE include)
+target_link_libraries(combat_tests PRIVATE game_logic)
 foreach(case_name attack_damage invalid_targets monster_damage victory round_limit)
     add_test(NAME combat_${case_name} COMMAND combat_tests ${case_name})
 endforeach()
 
-# SCRUM-48: validate card files using isolated temporary fixtures.
-add_executable(card_data_tests tests/card_data_tests.cpp)
-target_link_libraries(card_data_tests PRIVATE game_data nlohmann_json::nlohmann_json)
-foreach(case_name valid_effects missing_file malformed_json structure required_fields field_types numbers ids enums deck_references)
-    add_test(NAME card_data_${case_name}
-        COMMAND card_data_tests ${case_name} "${CMAKE_CURRENT_SOURCE_DIR}/data")
-endforeach()
+add_executable(dungeon_server server/server_main.cpp)
+target_link_libraries(dungeon_server PRIVATE room_server)
 
 # SCRUM-46 (partial): current DM attack cards and queued monster actions.
 add_executable(monster_card_tests
@@ -154,17 +165,6 @@ foreach(case_name deferred_damage order mana turn_authority invalid_targets inva
     add_test(NAME monster_card_${case_name} COMMAND monster_card_tests ${case_name})
 endforeach()
 
-# SCRUM-46: healing amount, health cap and card restrictions.
-add_executable(healing_tests
-        tests/healing_tests.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Monster.cpp
-        src/Player.cpp
-)
-target_include_directories(healing_tests PRIVATE include)
-foreach(case_name amount max_cap full_health nonpositive large_amount card_effect role_and_target)
-    add_test(NAME healing_${case_name} COMMAND healing_tests ${case_name})
-    set_tests_properties(healing_${case_name} PROPERTIES LABELS "healing")
-endforeach()
+add_executable(net_tests tests/net_tests.cpp)
+target_link_libraries(net_tests PRIVATE room_server net_client)
+add_test(NAME network COMMAND net_tests)

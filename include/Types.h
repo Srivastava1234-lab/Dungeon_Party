@@ -15,5 +15,6 @@ enum class HeroClass { WARRIOR, RANGER, HEALER };
 enum class AttackCategory { HEROES, DUNGEON_MASTER };
 struct CheckResult { bool valid; std::optional<std::string> reason; };
 struct HeroType { HeroClass heroClass; int maxHealth; };
+enum class SupportTarget {SELF_ONLY, SELF_OR_ALLY};
 
 #endif

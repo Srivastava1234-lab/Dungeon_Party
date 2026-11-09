@@ -16,16 +16,27 @@ Card::Card(const std::string& n, int cost)
         } 
     }
 
-HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, SpellTarget target, int freezeRounds)
-    : Card(std::move(n), c), effect(e), value(v), target(target), freezeRounds(freezeRounds){
+HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, std::optional<HeroClass> requiredClass, SupportTarget supportTarget) 
+    : Card(std::move(n), c), effect(e), value(v), requiredClass(requiredClass), supportTarget(supportTarget){
         if (v < 0){
             throw std::invalid_argument("negative effect value");
         }
     }
 
-bool HeroCard::canBePlayedBy(const Player& p) const {
-    const auto* hero = dynamic_cast<const Hero*>(&p);
-    return hero && (effect != HeroEffect::HEAL || hero->getType().heroClass == HeroClass::HEALER);
+bool HeroCard::canBePlayedBy(const Player& player) const {
+    const Hero* hero = dynamic_cast<const Hero*>(&player);
+
+    if (hero == nullptr) {
+        return false;
+    }
+
+    if (requiredClass.has_value()) {
+        if (hero->getType().heroClass != requiredClass.value()) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void HeroCard::applyEffect(Targetable& target) const {
@@ -153,4 +164,8 @@ DMEffect DMCard::getEffect() const {
 
 int DMCard::getValue() const {
     return value;
+}
+
+SupportTarget HeroCard::getSupportTarget() const {
+    return supportTarget;
 }
