@@ -76,6 +76,7 @@ add_executable(${PROJECT_NAME}
         main.cpp
         src/Card.cpp
         src/DungeonMaster.cpp
+        src/GameState.cpp
         src/Hero.cpp
         src/Match.cpp
         src/Monster.cpp
@@ -83,6 +84,7 @@ add_executable(${PROJECT_NAME}
         src/Renderer.cpp
         src/Trap.cpp
         include/stb_image.h
+        
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -91,6 +93,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         glad_lib
         game_data
         imgui
+        nlohmann_json::nlohmann_json
 )
 
 # validate_data Tool & Tests (SCRUM-5)
