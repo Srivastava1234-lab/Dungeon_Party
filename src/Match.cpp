@@ -137,13 +137,22 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
         return fail("Buff rules are not implemented yet");
     } 
     if (hc->getEffect() == HeroEffect::HEAL || hc->getEffect() == HeroEffect::SHIELD) {
-        for (int i = 0; i < heroes.size(); i++) {
+
+        for (std::size_t i = 0; i < heroes.size(); i++) {
             if (heroes[i] == &t && heroes[i]->isAlive()) {
+                if (hc->getSupportTarget() == SupportTarget::SELF_ONLY) {
+                    const Hero* caster = dynamic_cast<const Hero*>(&p);
+
+                    if (heroes[i] != caster) {
+                        return fail("This card can only target yourself");
+                    }
+                }
+
                 return {true, std::nullopt};
             }
         }
 
-        return fail("Healing and shielding require a living allied hero");
+        return fail("Select a living allied hero");
     }
     for (const auto& m : monsters){
         if (m.get() == &t && m->isAlive()) {
