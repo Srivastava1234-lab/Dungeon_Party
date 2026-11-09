@@ -60,7 +60,7 @@ void Player::discard(const Card& c) {
     hand.erase(it);
 }
 
-void Player::playCard(const Card& card, Targetable& target) {
+void Player::playCard(const Card& card, const std::vector<Targetable*>& targets) {
     Hero* hero = dynamic_cast<Hero*>(this);
     const HeroCard* heroCard = dynamic_cast<const HeroCard*>(&card);
 
@@ -99,15 +99,16 @@ void Player::playCard(const Card& card, Targetable& target) {
         }
 
         // Apply reduced damage without changing the original card.
-        HeroCard adjustedCard(card.getName(), card.getManaCost(), heroCard->getEffect(), damage);
+        HeroCard adjustedCard(card.getName(), card.getManaCost(), heroCard->getEffect(), damage,
+                              heroCard->getTarget(), heroCard->getFreezeRounds());
 
-        adjustedCard.applyEffect(target);
+        for (auto* target : targets) adjustedCard.applyEffect(*target);
 
         // Remove Weakness after the attack succeeds.
         hero->consumeAttackReduction();
     } else {
         // Healing and other effects work normally.
-        card.applyEffect(target);
+        for (auto* target : targets) card.applyEffect(*target);
     }
 
     mana -= card.getManaCost();

@@ -9,10 +9,13 @@
       "maxMana": 50,
       "image": "assets/Warrior_Artwork.png",
       "startingDeck": [
-        { "card": "strike", "count": 5 }
+        { "card": "strike", "count": 2 },
+        { "card": "fireball", "count": 1 },
+        { "card": "frost_bolt", "count": 1 },
+        { "card": "holy_lance", "count": 1 }
       ],
       "temporary": true,
-      "_note": "maxHealth 100, maxMana 50 and 5 Strike cards come from the Sprint 1 requirements (team chat, 23.10.2026). The image is the warrior artwork in assets/."
+      "_note": "Sprint 2 playtest deck: two Strikes and one copy of each draft spell. Health and mana retain the Sprint 1 values. The image is the warrior artwork in assets/."
     }
   ]
 }

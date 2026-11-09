@@ -41,7 +41,15 @@ bool HeroCard::canBePlayedBy(const Player& player) const {
 
 void HeroCard::applyEffect(Targetable& target) const {
     if (effect == HeroEffect::ATTACK || effect == HeroEffect::SPELL) {
+        auto* monster = dynamic_cast<Monster*>(&target);
+        if (effect == HeroEffect::SPELL && this->target == SpellTarget::BOSS_ONLY &&
+            (!monster || !monster->isBoss())) {
+            throw std::invalid_argument("This spell requires the boss");
+        }
         target.takeDamage(value);
+        if (effect == HeroEffect::SPELL && freezeRounds == 1 && monster && monster->isAlive()) {
+            monster->freezeNextAttack();
+        }
 
     } else if (effect == HeroEffect::HEAL || effect == HeroEffect::SHIELD) {
         Hero* hero = dynamic_cast<Hero*>(&target);

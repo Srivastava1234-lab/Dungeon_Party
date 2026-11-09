@@ -35,7 +35,7 @@ public:
     std::size_t getDiscardSize() const;
 private:
     // Match alone authorizes actions; callers cannot bypass turn validation.
-    void playCard(const Card& card, Targetable& target);
+    void playCard(const Card& card, const std::vector<Targetable*>& targets);
     void discard(const Card& card);
 };
 

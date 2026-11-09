@@ -5,6 +5,7 @@
 #include <vector>
 #include "Hero.h"
 #include "DungeonMaster.h"
+#include "DMCard.h"
 #include "Monster.h"
 #include "Trap.h"
 
@@ -21,6 +22,11 @@ class Match {
     std::vector<std::unique_ptr<Trap>> traps;
     std::vector<Hero*> heroes;
     DungeonMaster* dm = nullptr;
+    std::unique_ptr<Monster> pendingBoss;
+    Monster* finalBoss = nullptr;
+    int bossArrivalRound = 0;
+    std::optional<DMCard> bossAttack;
+    void spawnBoss();
     void beginTurn(Player& player);
     void checkWinner();
     struct MonsterAction {
@@ -35,6 +41,7 @@ public:
     Match(std::string id, int maxRounds = 20);
     void addPlayer(std::unique_ptr<Player> player);
     void addMonster(std::unique_ptr<Monster> monster);
+    void configureBoss(std::unique_ptr<Monster> boss, int arrivalRound, int attackPower);
     void start();
     CheckResult validate(const Player& player, const Card& card, const Targetable& target) const;
     void apply(const Card& card, Targetable& target);
@@ -47,6 +54,9 @@ public:
     const std::vector<Hero*>& getHeroes() const { return heroes; }
     const std::vector<std::unique_ptr<Monster>>& getMonsters() const { return monsters; }
     Player* getActivePlayer() const;
-    void queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target);};
+    bool canQueueBossAttack() const;
+    void queueBossAttack(DungeonMaster& player, Hero& target);
+    void queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target);
+};
 
 #endif

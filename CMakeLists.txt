@@ -149,9 +149,21 @@ endforeach()
 add_executable(dungeon_server server/server_main.cpp)
 target_link_libraries(dungeon_server PRIVATE room_server)
 
-add_executable(dungeon_online online_main.cpp src/Renderer.cpp)
-target_link_libraries(dungeon_online PRIVATE net_client room_server game_data game_logic glfw glad_lib imgui)
-target_compile_definitions(dungeon_online PRIVATE DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+# SCRUM-46 (partial): current DM attack cards and queued monster actions.
+add_executable(monster_card_tests
+        tests/monster_card_tests.cpp
+        src/Card.cpp
+        src/DungeonMaster.cpp
+        src/Hero.cpp
+        src/Match.cpp
+        src/Monster.cpp
+        src/Player.cpp
+        src/Trap.cpp
+)
+target_include_directories(monster_card_tests PRIVATE include)
+foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end spell_targets frost_bolt scheduled_boss)
+    add_test(NAME monster_card_${case_name} COMMAND monster_card_tests ${case_name})
+endforeach()
 
 add_executable(net_tests tests/net_tests.cpp)
 target_link_libraries(net_tests PRIVATE room_server net_client)

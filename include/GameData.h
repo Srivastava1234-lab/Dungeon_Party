@@ -43,6 +43,8 @@ struct CardDefinition {
     std::optional<HeroEffect> heroEffect; // set when side == Side::HEROES
     std::optional<DMEffect> dmEffect;     // set when side == Side::DUNGEON_MASTER
 
+    SpellTarget target = SpellTarget::ONE_ENEMY;
+    int freezeRounds = 0;
     int manaCost = 0;          // mana needed to play the card
     int value = 0;             // strength of the effect (damage, healing, ...)
     std::string description;   // short text for the HUD (without numbers)
@@ -84,6 +86,7 @@ struct MonsterDefinition {
     std::string id;       // e.g. "goblin"
     std::string name;     // e.g. "Goblin"
     int maxHealth = 0;    // health at the start of the match
+    int healthPerHero = 0;
     int attackPower = 0;  // UML Monster.attackPower (not a member of Kagan's Monster class yet)
 
     // UML Monster.boss: true = this monster is a final boss MONSTER.
@@ -110,6 +113,8 @@ struct LevelDefinition {
     int maxRounds = 0;                      // round limit (Kagan's Match::maxRounds)
     std::vector<std::string> defaultHeroes; // hero ids, only used until role selection exists (Sprint 2)
     std::vector<LevelMonsterEntry> monsters;
+    std::string bossId;
+    int bossArrivalRound = 0;
     bool temporary = true;
 };
 

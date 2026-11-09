@@ -1,8 +1,9 @@
 {
-  "_note": "Level 1 for Sprint 1: one kind of monster, 1 monster per hero player (no fixed total, no grid or positions). maxRounds 3 comes from the Sprint 1 requirements (team chat, 23.10.2026). defaultHeroes is only used until role selection exists (Sprint 2).",
+  "_note": "Sprint 2 playtest level. One goblin per hero plus a final boss.",
   "number": 1,
   "name": "Level 1",
-  "maxRounds": 3,
+  "maxRounds": 8,
+  "boss": { "monster": "final_boss", "arrivalRound": 4 },
   "defaultHeroes": ["warrior"],
   "monsters": [
     { "monster": "goblin", "countPerHero": 1 }
