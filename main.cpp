@@ -1,30 +1,30 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+
+#include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
+
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#include <iostream>
-#include "Renderer.h"
-#include "GameData.h"
-#include "Match.h"
-#include "Hero.h"
-#include "HeroCard.h"
-#include "Monster.h"
-#include "DungeonMaster.h"
-#include "TurnIndicator.h"
-#include "GameState.h"
 
-// Asset paths in the data files are relative to the project folder (e.g. "assets/Warrior_Artwork.png").
-// CMake passes the absolute project folder in, so the game finds its files no matter which
-// folder it is started from (VS Code, CLion and Visual Studio all start it in the build folder).
-static std::string projectPath(const std::string& relative)
-{
+#include "GameData.h"
+#include "NetClient.h"
+#include "Protocol.h"
+#include "Renderer.h"
+#include "RoomServer.h"
+
+using nlohmann::json;
+
+namespace {
+
+std::string projectPath(const std::string& relative) {
 #ifdef DUNGEON_PARTY_PROJECT_DIR
     return (std::filesystem::path(DUNGEON_PARTY_PROJECT_DIR) / relative).string();
 #else
@@ -47,320 +47,256 @@ static const char* roleName(LobbyRole role){
     case LobbyRole::DM:
         return "DM";
 
-    default:
-        return "No Role";
-    }
+// Start -> Menu (Host or Join) -> Connecting -> Lobby -> Battle
+// (Your teammate's Character/Name screen can easily slot between Start and Menu!)
+enum class OnlineScreen { Start, Menu, Connecting, Lobby, Battle };
+
+HeroEffect effectFromName(const std::string& name) {
+    if (name == "HEAL") return HeroEffect::HEAL;
+    if (name == "BUFF") return HeroEffect::BUFF;
+    if (name == "SPELL") return HeroEffect::SPELL;
+    return HeroEffect::ATTACK;
 }
-int main()
-{
-    if (!glfwInit())
-    {
+
+int intOr(const json& j, const char* key, int fallback = 0) {
+    auto it = j.find(key);
+    return (it != j.end() && it->is_number_integer()) ? it->get<int>() : fallback;
+}
+
+std::string strOr(const json& j, const char* key, const std::string& fallback = "") {
+    auto it = j.find(key);
+    return (it != j.end() && it->is_string()) ? it->get<std::string>() : fallback;
+}
+
+void drawRoomCode(const std::string& code, float fontScale) {
+    ImGui::SetWindowFontScale(fontScale);
+    ImGui::TextUnformatted(("Room " + code).c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(code.c_str());
+}
+
+void beginFullscreenWindow(const char* name) {
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+    ImGui::Begin(name, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+}
+
+} // namespace
+
+int main() {
+    if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW\n";
         return -1;
     }
-
-    // Request an OpenGL 3.3 core profile since it works with no issues and I cant be asked to look at newer ones
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    GLFWwindow *window = glfwCreateWindow(800, 600, "WOOOOOOO DUNGEON MASTERS", NULL, NULL);
-    if (!window)
-    {
-        std::cerr << "Failed to create GLFW window\n";
+    GLFWwindow* window = glfwCreateWindow(1000, 650, "Dungeon Party", nullptr, nullptr);
+    if (!window) {
         glfwTerminate();
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1); // vsync: without it the loop runs at 100% GPU/CPU
-
-    // Initialize GLAD (load OpenGL function pointers) BEFORE anything uses OpenGL
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-    {
-        std::cerr << "Failed to initialize GLAD\n";
-        glfwDestroyWindow(window);
+    glfwSwapInterval(1);
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         glfwTerminate();
         return -1;
     }
 
-    // Create and connect ImGui to window
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::GetIO().IniFilename = nullptr; // don't write imgui.ini into whatever folder we were started in
+    ImGui::GetIO().IniFilename = nullptr;
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    std::cout << "OpenGL loaded: " << glGetString(GL_VERSION) << "\n";
-
-    // Test state and match setup
-    Screen screen = Screen::Start;
-    std::unique_ptr<Match> currentMatch = nullptr;
-
-    // Initialize GameData loading from the data/ folder.
-    // If a data file is missing or wrong we show the error in the window instead of crashing.
+    // Load GameData and Textures
     std::unique_ptr<GameData> gameData;
-    std::string errorMessage;
-    try
-    {
-        gameData = std::make_unique<GameData>(GameData::defaultDataDirectory());
-    }
-    catch (const std::exception& e)
-    {
-        errorMessage = std::string("Could not load game data:\n") + e.what();
-        std::cerr << errorMessage << "\n";
-    }
-
-    // Load every PNG once at startup. Heroes are keyed by hero id, monsters by name
-    // (those are the values the Hero/Monster objects carry).
-    std::map<std::string, GLuint> heroTextures;
-    std::map<std::string, GLuint> monsterTextures;
+    std::string dataErrorMessage;
+    std::map<std::string, GLuint> heroTextures, monsterTextures;
     GLuint bgTexture = 0;
-    GLuint menuTexture = 0;
-    GLuint warriorTexture = 0;
-    GLuint healerTexture = 0;
-    GLuint wizardTexture = 0;
-    GLuint dmTexture = 0;
-    
-    int width = 0, height = 0;
-    if (gameData)
-    {
-        for (const auto& heroDef : gameData->getHeroes())
-        {
+    int w = 0, h = 0;
+    try {
+        gameData = std::make_unique<GameData>(GameData::defaultDataDirectory());
+        for (const auto& hero : gameData->getHeroes()) {
             GLuint tex = 0;
-            if (!heroDef.image.empty() && LoadTextureFromFile(projectPath(heroDef.image).c_str(), &tex, &width, &height))
-                heroTextures[heroDef.id] = tex;
+            if (!hero.image.empty() && LoadTextureFromFile(projectPath(hero.image).c_str(), &tex, &w, &h))
+                heroTextures[hero.id] = tex;
         }
-        for (const auto& monsterDef : gameData->getMonsters())
-        {
+        for (const auto& monster : gameData->getMonsters()) {
             GLuint tex = 0;
-            if (!monsterDef.image.empty() && LoadTextureFromFile(projectPath(monsterDef.image).c_str(), &tex, &width, &height))
-                monsterTextures[monsterDef.name] = tex;
+            if (!monster.image.empty() && LoadTextureFromFile(projectPath(monster.image).c_str(), &tex, &w, &h))
+                monsterTextures[monster.name] = tex;
         }
+    } catch (const std::exception& e) {
+        dataErrorMessage = std::string("Could not load game data:\n") + e.what();
+        std::cerr << dataErrorMessage << "\n";
     }
-    LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &width, &height);
-    LoadTextureFromFile(projectPath("assets/Menu_Background_AI_Generated.png").c_str(), &menuTexture, &width, &height);
-    LoadTextureFromFile(projectPath("assets/Warrior_Artwork.png").c_str(), &warriorTexture, &width, &height);
-    LoadTextureFromFile(projectPath("assets/Healer_Artwork.png").c_str(), &healerTexture, &width, &height);
+    LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &w, &h);
 
-    auto roleTexture = [&](LobbyRole role) -> GLuint {
-        switch(role){
-
-            case LobbyRole::Warrior:
-                return warriorTexture;
-
-            case LobbyRole::Healer:
-                return healerTexture;
-
-            case LobbyRole::Wizard:
-                return wizardTexture;
-            
-            case LobbyRole::DM:
-                return dmTexture;
-
-            default:
-                return 0;
-            }
-
-    };
-
-    auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) -> GLuint {
+    auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) {
         auto it = textures.find(key);
-        return it == textures.end() ? 0 : it->second;
+        return it == textures.end() ? GLuint(0) : it->second;
     };
 
+    // ---- Listen Server & Client state
+    std::unique_ptr<RoomServer> localServer; // Only created when this player clicks "Host"
+    NetClient client;
+    OnlineScreen screen = OnlineScreen::Start;
+    json pendingRequest;  // "create" or "join", sent as soon as the connection is up
+    std::string notice;   // last error / info line shown to the player
+    std::string roomCode, myId, hostId;
+    json lobbyPlayers = json::array();
+    json state;           // latest match state from the server
+    int selectedCard = -1;
 
-    int selectedCard = -1;   // nothing is selected
-    GameState state;         // what the battle screen draws; the server will send it later
-    const DungeonMaster* dmView = nullptr;   // TEMPORARY: lets us read the DM's mana from the local match
-    char nameBuf[17] = "";   // player name, up to 16 characters
-    char codeBuf[7] = "";    // room code, 6 characters
-    bool showHelp = false;   
-    bool isHost = false;     // Only host can start the match
-    LobbyPlayer cuurentPlayer = { nameBuf, LobbyRole::None};
-    
+    char nameBuf[net::MAX_NAME_LENGTH + 1] = "Player";
+    char serverBuf[128] = "127.0.0.1";
+    int port = net::DEFAULT_PORT;
+    char codeBuf[16] = "";
 
-    // FAKE DATA: until  server can send the code
-    std::string roomCode = "PLAYER";
-    std::vector<LobbyPlayer> lobbyPlayers = {{"Player2", LobbyRole::Healer}, {"Player 3", LobbyRole::DM}};
-    // Ends here
+    auto backToMenu = [&](const std::string& why) {
+        client.disconnect();
+        screen = OnlineScreen::Menu;
+        notice = why;
+        roomCode.clear();
+        myId.clear();
+        hostId.clear();
+        state = nullptr;
+        selectedCard = -1;
+    };
 
+    auto startConnecting = [&](const char* targetIp, json request) {
+        notice.clear();
+        if (!client.connect(targetIp, static_cast<std::uint16_t>(port))) {
+            notice = client.lastError();
+            return;
+        }
+        pendingRequest = std::move(request);
+        screen = OnlineScreen::Connecting;
+    };
 
-    // *****************************************************
-    // Main loop clear screen to a color until window closed
-    // *****************************************************
-    while (!glfwWindowShouldClose(window))
-    {
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+
+        // ---- 1. Tick embedded Listen Server if this PC is hosting
+        if (localServer) {
+            localServer->poll(0);
+        }
+
+        // ---- 2. Tick Network Client: once per frame, never blocks
+        client.poll();
+        if (screen != OnlineScreen::Start && screen != OnlineScreen::Menu &&
+            client.status() == NetClient::Status::Disconnected) {
+            backToMenu(client.lastError().empty() ? "Disconnected" : client.lastError());
+        }
+        if (screen == OnlineScreen::Connecting && client.status() == NetClient::Status::Connected &&
+            !pendingRequest.is_null()) {
+            client.send(pendingRequest);
+            pendingRequest = nullptr;
+        }
+        for (const json& message : client.takeMessages()) {
+            const std::string type = strOr(message, "t");
+            if (type == net::msg::JOINED) {
+                roomCode = strOr(message, "code");
+                myId = strOr(message, "you");
+                screen = OnlineScreen::Lobby;
+            } else if (type == net::msg::LOBBY) {
+                roomCode = strOr(message, "code", roomCode);
+                hostId = strOr(message, "host");
+                lobbyPlayers = message.value("players", json::array());
+                screen = OnlineScreen::Lobby;
+            } else if (type == net::msg::STATE) {
+                state = message;
+                hostId = strOr(message, "host", hostId);
+                screen = OnlineScreen::Battle;
+            } else if (type == net::msg::ERROR) {
+                notice = strOr(message, "msg");
+                if (screen == OnlineScreen::Connecting) backToMenu(notice);
+            } else if (type == net::msg::CLOSED) {
+                backToMenu(strOr(message, "msg", "The room was closed"));
+            }
+        }
+
         glClearColor(0.12f, 0.34f, 0.56f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        // Start match button
-        if (screen == Screen::Start)
-        {
-            ImGuiIO &io = ImGui::GetIO();
+        // ---- SCREEN 1: Start Screen
+        if (screen == OnlineScreen::Start) {
+            ImGuiIO& io = ImGui::GetIO();
             ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                     ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(400, 220));
-
             ImGui::Begin("Start", nullptr,
-                        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
             ImGui::SetWindowFontScale(2.0f);
-            ImGui::Text("DUNGEON PARTY");
-            if (!errorMessage.empty())
-            {
-                ImGui::SetWindowFontScale(1.0f);
-                ImGui::TextWrapped("%s", errorMessage.c_str());
-            }
-            else if (ImGui::Button("Menu", ImVec2(-1, 70)))
-            {
-                screen = Screen::Menu;
+            ImGui::TextUnformatted("DUNGEON PARTY");
+            ImGui::SetWindowFontScale(1.0f);
+
+            if (!dataErrorMessage.empty()) {
+                ImGui::TextWrapped("%s", dataErrorMessage.c_str());
+            } else if (ImGui::Button("Start match", ImVec2(-1, 70))) {
+                screen = OnlineScreen::Menu;
             }
             ImGui::End();
         }
-
-         else if (screen == Screen::Menu)
-        {
-            ImGui::SetNextWindowPos(ImVec2(0, 0));
-            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+        // ---- SCREEN 2: Host / Join Menu
+        else if (screen == OnlineScreen::Menu || screen == OnlineScreen::Connecting) {
+            ImGuiIO& io = ImGui::GetIO();
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                    ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(460, 0));
             ImGui::Begin("Menu", nullptr,
                          ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+            ImGui::SetWindowFontScale(2.0f);
+            ImGui::TextUnformatted("MULTIPLAYER LOBBY");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::Separator();
 
-            if (menuTexture != 0)
-            {
-                ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)menuTexture,
-                                                    ImVec2(0, 0), ImGui::GetIO().DisplaySize);
-            }
+            if (screen == OnlineScreen::Connecting) {
+                ImGui::Text("Connecting to %s:%d ...", serverBuf, port);
+                if (ImGui::Button("Cancel", ImVec2(-1, 0))) backToMenu("");
+            } else {
+                ImGui::InputText("Your name", nameBuf, sizeof(nameBuf));
+                ImGui::Spacing();
+                ImGui::Separator();
 
-            if(ImGui::Button("Back")){
-                screen = Screen::Start;
-            }
-            ImGui::SameLine(ImGui::GetWindowWidth() - 50);
-                if (ImGui::Button("?"))
-                {
-                    showHelp = !showHelp;
-                }
-            ImVec2 win = ImGui::GetIO().DisplaySize;
-            ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.2f));
-            ImGui::SetNextItemWidth(win.x * 0.3f);
-
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text,    ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
-            ImGui::InputTextWithHint("##name", "Your name", nameBuf, sizeof(nameBuf));
-            ImGui::PopStyleColor(2);
-            // A player can enter or create a lobby if the name field is not empty.
-            bool nameFilled = nameBuf[0] != '\0'; //Cstr ends with \0! so if the first char is that there is no name!
-            // Placing the widgets inside the empty box of the menuPic_AI_generated.png
-            
-            float panelW = win.x * 0.235f;
-            float panelH = win.y * 0.40f;
-            ImGui::SetCursorPos(ImVec2(win.x * 0.07f, win.y * 0.35f));
-
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.85f, 0.70f, 0.40f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.80f, 0.50f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.75f, 0.60f, 0.30f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_FrameBg,       ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
-            // Left panel -- Hosting --
-            ImGui::BeginChild("Host", ImVec2(panelW,panelH), true);
-            ImGui::Text("HOST A PARTY");
-            ImGui::TextWrapped("Create a room and share its code with your friends.");
-
-            ImGui::BeginDisabled(!nameFilled);
-            if(ImGui::Button("New Adventure", ImVec2(-1,50))){
-                isHost = true;
-                cuurentPlayer.name = nameBuf;
-                screen = Screen::Lobby;
-            }
-            ImGui::EndDisabled();
-
-            ImGui::EndChild();
-
-            ImGui::SetCursorPos(ImVec2(win.x * 0.71f, win.y * 0.35f));
-
-            // Right panel -- Joining --
-            ImGui::BeginChild("Join", ImVec2(panelW,panelH), true);
-            ImGui::Text("Join A PARTY");
-            ImGui::TextWrapped("Enter the code you got from the host:");
-            ImGui::InputTextWithHint("##code", "Room code", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
-            ImGui::BeginDisabled(!nameFilled);
-            if(ImGui::Button("Join", ImVec2(-1, 50))){
-                isHost = false;
-                cuurentPlayer.name = nameBuf;
-                screen = Screen::Lobby;
-            }
-            ImGui::EndDisabled();
-            ImGui::EndChild();
-
-            ImGui::PopStyleColor(5); //every color needs to be popped from the stack to set a new one.
-
-            ImGui::End();
-            
-            // Help is TEMPORARY for now 
-            if (showHelp)
-            {
-                ImGui::Begin("Help", &showHelp);
-                ImGui::TextWrapped("Host a room to get a code and share it with your friends. "
-                                "Or enter a friend's code on the right to join their room.");
-                ImGui::End();
-            }
-        }
-        // Lobby screen 
-        else if (screen == Screen::Lobby){
-
-            ImGui::SetNextWindowPos(ImVec2(0, 0));
-            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-            ImGui::Begin("Lobby", nullptr,
-                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-
-            if(ImGui::Button("Leave")){
-                screen = Screen::Menu;
-            }
-            ImGui::Text("Lobby");
-            ImGui::Text("Room code: %s", roomCode.c_str());
-            ImGui::Text("Players:");
-            // the name of the current player (you)
-            ImGui::BulletText("%s - %s", cuurentPlayer.name.c_str(), roleName(cuurentPlayer.role));
-            for (const auto& lb : lobbyPlayers)
-                ImGui::BulletText("%s - %s", lb.name.c_str(), roleName(lb.role));
-
-            
-
-            bool dmTaken = false;
-            for (LobbyPlayer p : lobbyPlayers )
-            {
-                if(p.role == LobbyRole::DM ) {dmTaken = true; }
-            }
-            // ROLE CARDS (color, dm lock, pics)
-            LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Wizard, LobbyRole::Healer, LobbyRole::DM};
-            for (LobbyRole role : roles)
-            {
-                bool locked = (role == LobbyRole::DM && dmTaken);
-                bool chosen = (role == cuurentPlayer.role);
-                GLuint tex = roleTexture(role);
-                bool clicked = false;
-
-                ImGui::BeginDisabled(locked);
-
-                if (chosen)
-                {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
+                // HOST SECTION (Starts embedded Listen Server automatically)
+                ImGui::TextUnformatted("Host on this PC (Listen Server):");
+                if (ImGui::Button("Host a new room", ImVec2(-1, 40))) {
+                    if (!localServer && gameData) {
+                        try {
+                            localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(port));
+                        } catch (const std::exception& e) {
+                            // If another window on this same PC is already hosting on port 7777,
+                            // we can still connect to 127.0.0.1 and create a room on it!
+                            std::cerr << "Local server note: " << e.what() << "\n";
+                        }
+                    }
+                    std::snprintf(serverBuf, sizeof(serverBuf), "127.0.0.1");
+                    startConnecting("127.0.0.1", {{"t", net::msg::CREATE}, {"name", nameBuf}});
                 }
 
-                if (tex != 0)
-                {
-                    ImTextureID id = (ImTextureID)(intptr_t)tex;
-                    clicked = ImGui::ImageButton(roleName(role), id, ImVec2(120, 120));
-                }
-                else
-                {
-                    clicked = ImGui::Button(roleName(role), ImVec2(120, 120));
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                // JOIN SECTION (Connects to Host's IP + Room Code)
+                ImGui::TextUnformatted("Join an existing room:");
+                ImGui::InputText("Host IP", serverBuf, sizeof(serverBuf));
+                ImGui::InputInt("Port", &port);
+                ImGui::InputTextWithHint("##code", "Room code (e.g. K7RM2Q)", codeBuf, sizeof(codeBuf),
+                                         ImGuiInputTextFlags_CharsUppercase);
+                ImGui::SameLine();
+                if (ImGui::Button("Join", ImVec2(-1, 0))) {
+                    startConnecting(serverBuf, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
                 }
 
                 if (chosen)
@@ -377,212 +313,139 @@ int main()
 
                 ImGui::SameLine();
             }
-
-            ImGui::NewLine();
-            
-            
-            if (isHost){
-
+            if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
+            ImGui::End();
+        }
+        // ---- SCREEN 3: Waiting Room Lobby
+        else if (screen == OnlineScreen::Lobby) {
+            beginFullscreenWindow("Lobby");
+            drawRoomCode(roomCode, 2.0f);
+            ImGui::Separator();
+            ImGui::Text("Give this code to your friends. Players (%zu/%zu):",
+                        lobbyPlayers.size(), net::MAX_PLAYERS_PER_ROOM);
+            for (const auto& p : lobbyPlayers) {
+                const std::string id = strOr(p, "id");
+                ImGui::BulletText("%s%s%s", strOr(p, "name").c_str(),
+                                  id == hostId ? "  (host)" : "",
+                                  id == myId ? "  <- you" : "");
+            }
+            ImGui::Spacing();
+            if (myId == hostId) {
                 if (ImGui::Button("Start match", ImVec2(200, 40)))
-                {
-                    
-                    try
-                    {
-                        // 1. Load Level 1 definition from JSON using GameData
-                        LevelDefinition lvl1 = gameData->loadLevel(1);
-
-                        // 2. Initialize the Match object using level max rounds
-                        auto match = std::make_unique<Match>("match_1", lvl1.maxRounds);
-
-                        // 3. Load the default Heroes for Level 1 (e.g., Warrior)
-                        int heroCount = 0;
-                        for (const auto& heroId : lvl1.defaultHeroes)
-                        {
-                            const auto& heroDef = gameData->getHero(heroId);
-                            auto loadedHero = std::make_unique<Hero>(heroDef.id, heroDef.name, heroDef.toHeroType(), heroDef.maxMana);
-
-                            // TEMPORARY until task 15 fills the deck from heroes.json
-                            for (int i = 0; i < 10; ++i)
-                                loadedHero->addToDeck(std::make_unique<HeroCard>("Strike", 1, HeroEffect::ATTACK, 5));
-
-                            match->addPlayer(std::move(loadedHero));
-                            ++heroCount;
-                        }
-
-                        // 3.5. Create and add the Dungeon Master (Required by Match rules!)
-                        auto dmPlayer = std::make_unique<DungeonMaster>("dm_1", "Dungeon Master", 10);
-                        dmView = dmPlayer.get();
-                        match->addPlayer(std::move(dmPlayer));
-
-                        // 4. Load Level 1 Monsters from JSON: countPerHero x number of heroes (see data/README.md)
-                        for (const auto& monsterEntry : lvl1.monsters)
-                        {
-                            const auto& monsterDef = gameData->getMonster(monsterEntry.monsterId);
-                            for (int i = 0; i < monsterEntry.countPerHero * heroCount; ++i)
-                                match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
-                        }
-
-                        // 5. Start the match and switch to the battle screen
-                        match->start();
-                        currentMatch = std::move(match);
-                        screen = Screen::Battle;
-                    }
-                    catch (const std::exception& e)
-                    {
-                        errorMessage = std::string("Could not start the match:\n") + e.what();
-                        std::cerr << errorMessage << "\n";
-                    }
-                }
+                    client.send({{"t", net::msg::START}});
+            } else {
+                ImGui::TextUnformatted("Waiting for the host to start...");
             }
-            else if(!isHost){
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Waiting for the host to start the match...");
-            }
-
-
-
+            ImGui::SameLine();
+            if (ImGui::Button("Leave", ImVec2(100, 40))) backToMenu("");
+            if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
             ImGui::End();
 
         }
-        // ****** Battle Screen ******
-        else if(screen == Screen::Battle){
-            // Full-screen battle layout
-            ImGui::SetNextWindowPos(ImVec2(0, 0));
-            ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-            ImGui::Begin("Dungeon Party - Battle", nullptr,
-                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+        // ---- SCREEN 4: Battle Screen
+        else if (screen == OnlineScreen::Battle && state.is_object()) {
+            beginFullscreenWindow("Battle");
+            const bool myTurn = !state["active"].is_null() && strOr(state, "active") == myId;
 
-            if (currentMatch)
-            {
-                // TEMPORARY: until the server sends the state, build it from the local match
-                // and send it through JSON once. With the network this line is deleted.
-                state = gameStateFromJson(gameStateToJson(
-                    makeGameState(*currentMatch, *dmView, currentMatch->getActivePlayer())));
-
-                // 1. TOP BAR: Status & Round Info
-                ImGui::BeginChild("TopStatusBar", ImVec2(0, 40), true);
-                if (auto* active = currentMatch->getActivePlayer()) {
-                    if (ImGui::Button("End turn")) currentMatch->endTurn(*active);
+            // Top bar: room code top-left, then turn info
+            ImGui::BeginChild("TopBar", ImVec2(0, 44), true);
+            drawRoomCode(roomCode, 1.4f);
+            ImGui::SameLine(220);
+            if (!state["winner"].is_null()) {
+                ImGui::Text("Round %d | %s win!", intOr(state, "round"),
+                            strOr(state, "winner") == "HEROES" ? "Heroes" : "Dungeon Master");
+            } else {
+                std::string whose = "Dungeon Master";
+                for (const auto& hero : state["heroes"])
+                    if (strOr(hero, "id") == strOr(state, "active")) whose = strOr(hero, "name");
+                ImGui::Text("Round %d | %s", intOr(state, "round"),
+                            myTurn ? "YOUR TURN" : (whose + "'s turn").c_str());
+                if (myTurn) {
                     ImGui::SameLine();
-                }
-                drawTurnIndicator(*currentMatch);
-
-
-                ImGui::EndChild();
-
-                // 2. MIDDLE BATTLEFIELD: Background & Combatants
-                float middleHeight = ImGui::GetWindowHeight() - 220;
-                ImGui::BeginChild("Battlefield", ImVec2(0, middleHeight), true);
-
-                // Draw Level 1 Background PNG if loaded
-                if (bgTexture != 0)
-                {
-                    // Draw background to fill the entire battlefield area
-                    ImGui::SetCursorPos(ImVec2(0, 0));
-                    ImGui::Image((ImTextureID)(intptr_t)bgTexture, ImVec2(ImGui::GetContentRegionAvail()));
-
-                    // Reset cursor back to top-left so characters draw on top of the background
-                    ImGui::SetCursorPos(ImVec2(10, 10));
-                }
-
-                Player* active = currentMatch->getActivePlayer();
-                // Render all active heroes on the left side
-                for (size_t i = 0; i < state.heroes.size(); ++i)
-                {
-                    if (i > 0) ImGui::SameLine();
-                    const HeroState& h = state.heroes[i];
-                    Character heroChar{
-                        h.name,
-                        h.health,
-                        h.maxHealth,
-                        h.mana,
-                        h.maxMana,
-                        textureOr0(heroTextures, h.id)
-                    };
-                    drawCharacter(heroChar);
-                }
-
-                ImGui::SameLine(400); // Space between hero and monster
-
-                // Render all monsters on the right side
-                const auto& matchMonsters = currentMatch->getMonsters();   // TEMPORARY: only used for apply below
-                int drawn = 0; // to count how many monsters are drawned
-                for (size_t i = 0; i < state.monsters.size(); ++i)
-                {
-                    const MonsterState& m = state.monsters[i];
-                    if (!m.alive) continue; // to skip the dead monsters
-
-                    if (drawn > 0) ImGui::SameLine();
-                    drawn++;
-
-                    Character monsterChar{
-                        m.name,
-                        m.health,
-                        m.maxHealth,
-                        0, 0,
-                        textureOr0(monsterTextures, m.name)
-                    };
-
-                    if (drawCharacter(monsterChar) && selectedCard >= 0 && active)
-                    {
-                        try {
-                            // TEMPORARY: same index in the state and in the match. With the
-                            // server this becomes a request: card index + monster index.
-                            currentMatch->apply(active->getHandCard(selectedCard), *matchMonsters[i]);
-                        }
-                        catch (const std::exception& e) {
-                            std::cerr << e.what() << "\n";
-                        }
+                    if (ImGui::Button("End turn")) {
+                        client.send({{"t", net::msg::END}});
                         selectedCard = -1;
                     }
                 }
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Leave")) backToMenu("");
+            ImGui::EndChild();
 
-                ImGui::EndChild();
-
-                // Current mana of the active hero, used to decide which cards can be played
-                int heroMana = state.heroes.empty() ? 0 : state.heroes[0].mana;
-
-                // 3. BOTTOM TRAY: Card Hand & Deck Selection
-                ImGui::BeginChild("CardTray", ImVec2(0, 0), true);
-
-                float rowY = ImGui::GetCursorPosY() + 15.0f;
-
-                {
-                    for (std::size_t i = 0; i < state.myHand.size(); i++)
-                    {
-                        const CardState& c = state.myHand[i];
-                        CardView view{ c.name, c.manaCost, c.effect, c.value };
-
-                        if (i > 0) ImGui::SameLine();
-                        // to distinguish the selected card
-                        bool isSelected = ((int)i == selectedCard);
-                        ImGui::SetCursorPosY(rowY - (isSelected ? 15.0f : 0.0f));
-
-                        if (drawCard(view, heroMana >= view.manaCost, isSelected))
-                            selectedCard = isSelected ? -1 : (int)i;
-                    }
+            // Battlefield
+            ImGui::BeginChild("Battlefield", ImVec2(0, ImGui::GetWindowHeight() - 230), true);
+            if (bgTexture) {
+                ImGui::SetCursorPos(ImVec2(0, 0));
+                ImGui::Image((ImTextureID)(intptr_t)bgTexture, ImGui::GetContentRegionAvail());
+                ImGui::SetCursorPos(ImVec2(10, 10));
+            }
+            int drawn = 0;
+            for (const auto& hero : state["heroes"]) {
+                if (drawn++ > 0) ImGui::SameLine();
+                std::string label = strOr(hero, "name");
+                if (strOr(hero, "id") == myId) label += " (you)";
+                if (!hero.value("connected", true)) label += " [left]";
+                drawCharacter({label, intOr(hero, "hp"), intOr(hero, "maxHp", 1),
+                               intOr(hero, "mana"), intOr(hero, "maxMana"),
+                               textureOr0(heroTextures, strOr(hero, "heroId"))});
+            }
+            ImGui::SameLine(0, 60);
+            drawn = 0;
+            const json& monsters = state["monsters"];
+            for (std::size_t i = 0; i < monsters.size(); ++i) {
+                if (!monsters[i].value("alive", false)) continue;
+                if (drawn++ > 0) ImGui::SameLine();
+                const bool clicked = drawCharacter({
+                    strOr(monsters[i], "name"),
+                    intOr(monsters[i], "hp"),
+                    intOr(monsters[i], "maxHp", 1),
+                    0, 0,
+                    textureOr0(monsterTextures, strOr(monsters[i], "name"))
+                });
+                if (clicked && myTurn && selectedCard >= 0) {
+                    client.send({{"t", net::msg::PLAY}, {"card", selectedCard}, {"target", i}});
+                    selectedCard = -1;
                 }
-
-                ImGui::EndChild();
             }
-            else
-            {
-                ImGui::Text("No active match found. Please start from the menu.");
-            }
+            ImGui::EndChild();
 
+            // Hand
+            ImGui::BeginChild("Hand", ImVec2(0, 0), true);
+            int myMana = 0;
+            for (const auto& hero : state["heroes"])
+                if (strOr(hero, "id") == myId) myMana = intOr(hero, "mana");
+            if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
+            const float rowY = ImGui::GetCursorPosY() + 15.0f;
+            const json hand = state.value("hand", json::array());
+            for (std::size_t i = 0; i < hand.size(); ++i) {
+                CardView view{
+                    strOr(hand[i], "name"),
+                    intOr(hand[i], "cost"),
+                    effectFromName(strOr(hand[i], "effect")),
+                    intOr(hand[i], "value")
+                };
+                if (i > 0) ImGui::SameLine();
+                const bool isSelected = static_cast<int>(i) == selectedCard;
+                ImGui::SetCursorPosY(rowY - (isSelected ? 15.0f : 0.0f));
+                if (drawCard(view, myTurn && myMana >= view.manaCost, isSelected) && myTurn) {
+                    selectedCard = isSelected ? -1 : static_cast<int>(i);
+                    notice.clear();
+                }
+            }
+            ImGui::EndChild();
             ImGui::End();
         }
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
         glfwSwapBuffers(window);
-        glfwPollEvents();
     }
 
+    client.disconnect();
+    localServer.reset();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
-
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
