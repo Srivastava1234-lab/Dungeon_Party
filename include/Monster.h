@@ -9,6 +9,7 @@ class Monster : public Targetable {
     int maxHealth;
     bool boss;
     int level;
+    int burnTurnsRemaining = 0; 
 public:
     Monster(std::string name, int health, bool boss = false, int level = 1);
     const std::string& getName() const;
@@ -19,6 +20,9 @@ public:
     int getLevel() const;
     void takeDamage(int amount) override;
     void attack(const Card& card, Targetable& target) const;
+    void applyBurn();
+    void processBurn();
+    int getBurnTurnsRemaining() const;
 };
 
 

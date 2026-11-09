@@ -31,6 +31,21 @@ std::string projectPath(const std::string& relative) {
     return relative;
 #endif
 }
+// An enum cannot be printed using ImGui::text so we need to switch it to its equivalent str/char value
+static const char* roleName(LobbyRole role){
+    switch (role)
+    {
+    case LobbyRole::Warrior:
+        return "Warrior";
+
+    case LobbyRole::Healer:
+        return "Healer";
+
+    case LobbyRole::Wizard:
+        return "Wizard";
+    
+    case LobbyRole::DM:
+        return "DM";
 
 // Start -> Menu (Host or Join) -> Connecting -> Lobby -> Battle
 // (Your teammate's Character/Name screen can easily slot between Start and Menu!)
@@ -283,6 +298,20 @@ int main() {
                 if (ImGui::Button("Join", ImVec2(-1, 0))) {
                     startConnecting(serverBuf, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
                 }
+
+                if (chosen)
+                {
+                    ImGui::PopStyleColor();
+                }
+
+                ImGui::EndDisabled();
+
+                if (clicked)
+                {
+                    cuurentPlayer.role = role;
+                }
+
+                ImGui::SameLine();
             }
             if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
             ImGui::End();
@@ -311,6 +340,7 @@ int main() {
             if (ImGui::Button("Leave", ImVec2(100, 40))) backToMenu("");
             if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
             ImGui::End();
+
         }
         // ---- SCREEN 4: Battle Screen
         else if (screen == OnlineScreen::Battle && state.is_object()) {

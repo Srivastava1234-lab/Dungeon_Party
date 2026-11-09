@@ -89,6 +89,7 @@ endif()
 add_library(game_logic STATIC
         src/Card.cpp
         src/DungeonMaster.cpp
+        src/GameState.cpp
         src/Hero.cpp
         src/Match.cpp
         src/Monster.cpp
@@ -122,6 +123,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         glm::glm
         glad_lib
         imgui
+        nlohmann_json::nlohmann_json
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE
         DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"

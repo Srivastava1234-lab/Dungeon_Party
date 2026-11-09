@@ -193,7 +193,8 @@ DMEffect toDMEffect(const std::string& text, const std::string& where) {
     if (text == "SUMMON") return DMEffect::SUMMON;
     if (text == "TRAP") return DMEffect::TRAP;
     if (text == "DEFENSIVE") return DMEffect::DEFENSIVE;
-    fail(where, "unknown effect \"" + text + "\" for a DUNGEON_MASTER card (allowed: SUMMON, TRAP, DEFENSIVE)");
+    if (text == "ATTACK") return DMEffect::ATTACK;
+    fail(where, "unknown effect \"" + text + "\" for a DUNGEON_MASTER card (allowed: SUMMON, TRAP, DEFENSIVE, ATTACK)");
 }
 
 HeroClass toHeroClass(const std::string& text, const std::string& where) {

@@ -2,6 +2,10 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <random>
+#include "Hero.h"
+#include "HeroCard.h"
+
 Player::Player(std::string id, std::string n, int maximum, bool b)
     : name(std::move(n)), 
     mana(maximum), 
@@ -23,8 +27,15 @@ void Player::addToDeck(std::unique_ptr<Card> c) {
 
 const Card* Player::drawCard() {
     if (deck.empty()){
-        return nullptr;
-    }
+        if(discardPile.empty()){
+            return nullptr;     
+        }
+
+        //swap() moves the discard pile into the empty deck. shuffle() randomizes its order. If both piles are empty, drawing stops.
+        deck.swap(discardPile);
+        static std::mt19937 generator(std::random_device{}());
+        std::shuffle(deck.begin(), deck.end(), generator);
+    }    
 
     hand.push_back(std::move(deck.front()));
     deck.erase(deck.begin());
@@ -48,12 +59,60 @@ void Player::discard(const Card& c) {
     discardPile.push_back(std::move(*it));
     hand.erase(it);
 }
-void Player::playCard(const Card& c, Targetable& t) {
-    // Match has validated this action. Failed effects must not charge mana.
-    c.applyEffect(t);
-    mana -= c.getManaCost();
-    ++cardsPlayedThisTurn;
-    discard(c);
+
+void Player::playCard(const Card& card, Targetable& target) {
+    Hero* hero = dynamic_cast<Hero*>(this);
+    const HeroCard* heroCard = dynamic_cast<const HeroCard*>(&card);
+
+    bool damagingCard = false;
+
+    if (heroCard != nullptr) {
+        if (heroCard->getEffect() == HeroEffect::ATTACK || heroCard->getEffect() == HeroEffect::SPELL || heroCard->getEffect() == HeroEffect::FIREBALL) {
+            damagingCard = true;
+        }
+    }
+
+    if (hero != nullptr && heroCard != nullptr && heroCard->getEffect() == HeroEffect::SHIELD) {
+
+        Hero* shieldTarget = dynamic_cast<Hero*>(&target);
+
+        if (shieldTarget == nullptr) {
+            throw std::invalid_argument("Shield requires a hero target");
+        }
+
+        int shieldAmount = heroCard->getValue();
+        bool targetingSelf = shieldTarget == hero;
+
+        if (hero->getType().heroClass == HeroClass::WARRIOR && targetingSelf) {
+            shieldAmount += 3;
+        } else if (hero->getType().heroClass == HeroClass::HEALER && !targetingSelf) {
+            shieldAmount += 3;
+        }
+
+        shieldTarget->addShield(shieldAmount);
+
+    } else if (hero != nullptr && damagingCard) {
+        int damage = heroCard->getValue() - hero->getAttackReduction();
+
+        if (damage < 0) {
+            damage = 0;
+        }
+
+        // Apply reduced damage without changing the original card.
+        HeroCard adjustedCard(card.getName(), card.getManaCost(), heroCard->getEffect(), damage);
+
+        adjustedCard.applyEffect(target);
+
+        // Remove Weakness after the attack succeeds.
+        hero->consumeAttackReduction();
+    } else {
+        // Healing and other effects work normally.
+        card.applyEffect(target);
+    }
+
+    mana -= card.getManaCost();
+    cardsPlayedThisTurn++;
+    discard(card);
 }
 
 const std::string& Player::getName() const {

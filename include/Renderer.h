@@ -16,6 +16,13 @@ struct Character {
     GLuint textureID = 0;
 };
 
+
+enum class LobbyRole { None, Warrior, Healer, Wizard, DM };
+struct LobbyPlayer {
+    std::string name;
+    LobbyRole role;
+};
+
 // decoupled from card.h, graphics stay independent of the game engine rules.
 struct CardView {
     std::string name;
@@ -24,7 +31,7 @@ struct CardView {
     int value;
 };
 
-enum class Screen { Start, Battle };
+enum class Screen { Start, Menu, Lobby, Battle};
 
 bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
 bool drawCharacter(const Character& c);

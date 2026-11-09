@@ -16,6 +16,7 @@ bin/
 *.pch
 *.exe
 *.out
+.DS_Store
 
 #ImGui writes this at runtime
 imgui.ini
