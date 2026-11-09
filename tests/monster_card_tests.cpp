@@ -77,7 +77,12 @@ void run(const std::string& name) {
         auto hero = std::make_unique<Hero>("hero", "Hero", HeroType{HeroClass::WARRIOR, 101}, 50);
         auto* h = hero.get();
         match.addPlayer(std::move(hero));
-        match.addPlayer(std::make_unique<DungeonMaster>("dm", "DM", 10));
+        auto other = std::make_unique<Hero>("other", "Other", HeroType{HeroClass::WARRIOR, 101}, 50);
+        auto* target = other.get();
+        match.addPlayer(std::move(other));
+        auto dungeonMaster = std::make_unique<DungeonMaster>("dm", "DM", 10);
+        auto* dm = dungeonMaster.get();
+        match.addPlayer(std::move(dungeonMaster));
         auto goblin = std::make_unique<Monster>("Goblin", 10);
         auto* g = goblin.get();
         match.addMonster(std::move(goblin));
@@ -88,10 +93,18 @@ void run(const std::string& name) {
         for (int round = 1; round <= 8; ++round) {
             check(!match.isFinished() && match.getRound() == round, "Round ended prematurely");
             check(match.getMonsters().size() == (round < 4 ? 1u : 2u), "Incorrect boss arrival");
-            match.endTurn(*match.getActivePlayer());
-            match.endTurn(*match.getActivePlayer());
-            check(h->getHealth() == 101 - 20 * (round < 4 ? 0 : round - 3),
-                  "Boss must attack exactly once each monster turn after arriving");
+            match.endTurn(*h);
+            match.endTurn(*target);
+            if (round >= 4) {
+                match.queueBossAttack(*dm, *target);
+                rejects<std::invalid_argument>([&] { match.queueBossAttack(*dm, *h); });
+            } else {
+                rejects<std::invalid_argument>([&] { match.queueBossAttack(*dm, *target); });
+            }
+            match.endTurn(*dm);
+            check(h->getHealth() == 101 &&
+                  target->getHealth() == 101 - 20 * (round < 4 ? 0 : round - 3),
+                  "Boss must hit the selected hero exactly once");
         }
         check(match.getWinner() == Side::DUNGEON_MASTER, "Living boss must win after round eight");
     } else if (name == "spell_targets") {

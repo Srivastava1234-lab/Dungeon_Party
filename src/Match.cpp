@@ -261,15 +261,6 @@ void Match::endTurn(Player& p) {
             }
         }
 
-        if (!isFinished() && finalBoss && finalBoss->isAlive()) {
-            const auto target = std::find_if(heroes.begin(), heroes.end(),
-                                             [](const Hero* hero) { return hero->isAlive(); });
-            if (target != heroes.end()) {
-                finalBoss->attack(*bossAttack, **target);
-                checkWinner();
-            }
-        }
-
         // These orders must not run again next round.
         monsterActions.clear();
 
@@ -307,9 +298,26 @@ std::optional<Side> Match::getWinner() const {
     return winner;
 }
 
+bool Match::canQueueBossAttack() const {
+    return phase == Phase::DM_TURN && getActivePlayer() == dm && finalBoss &&
+        finalBoss->isAlive() &&
+        std::none_of(monsterActions.begin(), monsterActions.end(),
+                     [this](const MonsterAction& action) { return action.monster == finalBoss; });
+}
+
+void Match::queueBossAttack(DungeonMaster& player, Hero& target) {
+    if (getActivePlayer() != &player || !canQueueBossAttack()) {
+        throw std::invalid_argument("The boss cannot queue an attack now");
+    }
+    if (std::find(heroes.begin(), heroes.end(), &target) == heroes.end() || !target.isAlive()) {
+        throw std::invalid_argument("Select a living hero in this match");
+    }
+    monsterActions.push_back({finalBoss, &*bossAttack, &target});
+}
+
 void Match::queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target) {
     if (&monster == finalBoss) {
-        throw std::invalid_argument("The final boss attacks automatically");
+        throw std::invalid_argument("Use the boss attack order");
     }
     // Only the active DM can give monster orders.
     if (!started || isFinished()) {

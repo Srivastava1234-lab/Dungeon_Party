@@ -391,6 +391,10 @@ int main()
                 }
 
                 Player* active = currentMatch->getActivePlayer();
+                auto* activeDm = dynamic_cast<DungeonMaster*>(active);
+                const bool choosingBossTarget = activeDm && currentMatch->canQueueBossAttack();
+                if (choosingBossTarget) ImGui::TextUnformatted("Boss attack: click a living hero");
+
                 // Render all active heroes on the left side
                 const auto& matchHeroes = currentMatch->getHeroes();
                 for (size_t i = 0; i < matchHeroes.size(); ++i)
@@ -407,7 +411,11 @@ int main()
                             h->getMaxMana(),
                             textureOr0(heroTextures, h->getPlayerId())
                         };
-                        drawCharacter(heroChar);
+                        ImGui::PushID(h);
+                        if (drawCharacter(heroChar) && choosingBossTarget && h->isAlive()) {
+                            currentMatch->queueBossAttack(*activeDm, *h);
+                        }
+                        ImGui::PopID();
                     }
                 }
 

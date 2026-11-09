@@ -54,6 +54,9 @@ public:
     const std::vector<Hero*>& getHeroes() const { return heroes; }
     const std::vector<std::unique_ptr<Monster>>& getMonsters() const { return monsters; }
     Player* getActivePlayer() const;
-    void queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target);};
+    bool canQueueBossAttack() const;
+    void queueBossAttack(DungeonMaster& player, Hero& target);
+    void queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target);
+};
 
 #endif
