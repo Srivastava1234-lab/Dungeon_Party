@@ -44,7 +44,7 @@ private:
         ENetPeer* peer = nullptr; // nullptr = disconnected during the match (their turns are skipped)
         std::string id;           // "p1", "p2", ... unique inside the room; also the Hero's playerId
         std::string name;
-        std::string heroId;       // which hero from heroes.json this member plays
+        std::string role;         // "" = not chosen yet, "dm", or a hero id from heroes.json ("warrior", "healer")
     };
 
     struct Room {
@@ -76,9 +76,12 @@ private:
     // Requests
     void handleCreate(ENetPeer* peer, const nlohmann::json& message);
     void handleJoin(ENetPeer* peer, const nlohmann::json& message);
+    void handleRole(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
     void handleStart(ENetPeer* peer, Room& room, Member& member);
     void handlePlay(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
     void handleEnd(ENetPeer* peer, Room& room, Member& member);
+    void handleCommand(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
+    void handleBoss(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
 
     // Helpers
     void leaveRoom(ENetPeer* peer);
@@ -87,6 +90,8 @@ private:
     std::string newRoomCode();
     std::unique_ptr<Match> buildMatch(const Room& room);
     void skipBotAndAbsentTurns(Room& room);
+    void playBotDungeonMaster(Match& match, DungeonMaster& dm); // queues attacks for the computer DM
+    DungeonMaster* activeDungeonMaster(Room& room, const Member& member);
 
     void send(ENetPeer* peer, const nlohmann::json& message);
     void sendError(ENetPeer* peer, const std::string& text);

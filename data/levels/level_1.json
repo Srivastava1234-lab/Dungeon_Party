@@ -3,10 +3,28 @@
   "number": 1,
   "name": "Level 1",
   "maxRounds": 8,
-  "boss": { "monster": "final_boss", "arrivalRound": 4 },
-  "defaultHeroes": ["warrior"],
-  "monsters": [
-    { "monster": "goblin", "countPerHero": 1 }
+  "boss": {
+    "monster": "final_boss",
+    "arrivalRound": 4
+  },
+  "defaultHeroes": [
+    "warrior"
   ],
-  "temporary": true
+  "monsters": [
+    {
+      "monster": "goblin",
+      "countPerHero": 1
+    }
+  ],
+  "temporary": true,
+  "dungeonMaster": {
+    "maxMana": 10,
+    "startingDeck": [
+      {
+        "card": "monster_attack",
+        "count": 12
+      }
+    ],
+    "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
+  }
 }

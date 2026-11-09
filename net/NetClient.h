@@ -39,6 +39,10 @@ public:
     // Everything received since the last call, oldest first.
     std::vector<nlohmann::json> takeMessages();
 
+    // This computer's address in its local network (e.g. "192.168.178.40"), or "" if unknown.
+    // Only reachable for players in the SAME network; see net/PROTOCOL.md for other networks.
+    std::string localNetworkAddress() const;
+
     Status status() const { return currentStatus; }
     const std::string& lastError() const { return error; }
 
