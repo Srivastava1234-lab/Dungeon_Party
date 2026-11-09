@@ -138,13 +138,30 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     } 
     if (hc->getEffect() == HeroEffect::HEAL || hc->getEffect() == HeroEffect::SHIELD) {
 
+        const Hero* caster = dynamic_cast<const Hero*>(&p);
+
+        if (caster == nullptr) {
+            return fail("Only heroes can play this card");
+        }
+
         for (std::size_t i = 0; i < heroes.size(); i++) {
             if (heroes[i] == &t && heroes[i]->isAlive()) {
-                if (hc->getSupportTarget() == SupportTarget::SELF_ONLY) {
-                    const Hero* caster = dynamic_cast<const Hero*>(&p);
+                bool targetingSelf = heroes[i] == caster;
+                bool isHealer =
+                    caster->getType().heroClass == HeroClass::HEALER;
 
-                    if (heroes[i] != caster) {
-                        return fail("This card can only target yourself");
+                if (hc->getEffect() == HeroEffect::SHIELD) {
+                    if (!targetingSelf && !isHealer) {
+                        return fail("Only Healers can shield allies");
+                    }
+                } else {
+                    if (!targetingSelf && !isHealer) {
+                        return fail("Only Healers can heal allies");
+                    }
+
+                    if (!targetingSelf &&
+                        hc->getSupportTarget() == SupportTarget::SELF_ONLY) {
+                        return fail("This healing card can only target yourself");
                     }
                 }
 

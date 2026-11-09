@@ -72,7 +72,26 @@ void Player::playCard(const Card& card, Targetable& target) {
         }
     }
 
-    if (hero != nullptr && damagingCard) {
+    if (hero != nullptr && heroCard != nullptr && heroCard->getEffect() == HeroEffect::SHIELD) {
+
+        Hero* shieldTarget = dynamic_cast<Hero*>(&target);
+
+        if (shieldTarget == nullptr) {
+            throw std::invalid_argument("Shield requires a hero target");
+        }
+
+        int shieldAmount = heroCard->getValue();
+        bool targetingSelf = shieldTarget == hero;
+
+        if (hero->getType().heroClass == HeroClass::WARRIOR && targetingSelf) {
+            shieldAmount += 3;
+        } else if (hero->getType().heroClass == HeroClass::HEALER && !targetingSelf) {
+            shieldAmount += 3;
+        }
+
+        shieldTarget->addShield(shieldAmount);
+
+    } else if (hero != nullptr && damagingCard) {
         int damage = heroCard->getValue() - hero->getAttackReduction();
 
         if (damage < 0) {
