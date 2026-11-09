@@ -97,6 +97,7 @@ add_library(game_logic STATIC
         src/Trap.cpp
 )
 target_include_directories(game_logic PUBLIC include)
+target_link_libraries(game_logic PUBLIC nlohmann_json::nlohmann_json)
 
 # Client-side networking
 add_library(net_client STATIC net/NetClient.cpp)
