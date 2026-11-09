@@ -1,0 +1,165 @@
+From f6ca464aeb5a3f1383c4c4b52036710bdc67f7b6 Mon Sep 17 00:00:00 2001
+From: Akshat <akshat@local>
+Date: Mon, 9 Nov 2026 17:58:58 +0000
+Subject: [PATCH] Fix build errors after Sprint 2 merges
+
+- HeroCard: keep both Kagan's class/support fields and Hulya's spell target + freeze
+  (the merge kept only one header, but code from both branches uses it)
+- Player::playCard: shield code used the old single 'target' parameter; use targets list
+- main.cpp: close roleName()'s switch/function (missing braces)
+- main.cpp: remove role-picker fragment that ended up in the menu screen; restore the
+  SCRUM-35 role picker in the networked lobby (local only until the server knows roles)
+- CMake: game_logic links nlohmann_json (GameState.cpp needs it)
+---
+ CMakeLists.txt     |  1 +
+ include/HeroCard.h |  7 +++++++
+ main.cpp           | 39 ++++++++++++++++++++++++++-------------
+ src/Card.cpp       |  6 ++++++
+ src/Player.cpp     |  3 ++-
+ 5 files changed, 42 insertions(+), 14 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b479334..8c1f38b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -97,6 +97,7 @@ add_library(game_logic STATIC
+         src/Trap.cpp
+ )
+ target_include_directories(game_logic PUBLIC include)
++target_link_libraries(game_logic PUBLIC nlohmann_json::nlohmann_json)
+ 
+ # Client-side networking
+ add_library(net_client STATIC net/NetClient.cpp)
+diff --git a/include/HeroCard.h b/include/HeroCard.h
+index 052a7af..dcea734 100644
+--- a/include/HeroCard.h
++++ b/include/HeroCard.h
+@@ -9,8 +9,15 @@ class HeroCard : public Card {
+     int value;
+     std::optional<HeroClass> requiredClass;
+     SupportTarget supportTarget;
++    SpellTarget target = SpellTarget::ONE_ENEMY; // spells (Hülya, Sprint 2)
++    int freezeRounds = 0;
+ public:
++    // Class-restricted / support cards (Kagan)
+     HeroCard(std::string name, int cost, HeroEffect effect, int value, std::optional<HeroClass> requiredClass = std::nullopt, SupportTarget supportTarget = SupportTarget::SELF_ONLY);
++    // Spells with a target rule and optional freeze (Hülya)
++    HeroCard(std::string name, int cost, HeroEffect effect, int value, SpellTarget target, int freezeRounds = 0);
++    SpellTarget getTarget() const { return target; }
++    int getFreezeRounds() const { return freezeRounds; }
+     HeroEffect getEffect() const;
+     int getValue() const;
+     bool canBePlayedBy(const Player& player) const override;
+diff --git a/main.cpp b/main.cpp
+index 4d2b727..f0b342a 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -46,6 +46,9 @@ static const char* roleName(LobbyRole role){
+     
+     case LobbyRole::DM:
+         return "DM";
++    }
++    return "";
++}
+ 
+ // Start -> Menu (Host or Join) -> Connecting -> Lobby -> Battle
+ // (Your teammate's Character/Name screen can easily slot between Start and Menu!)
+@@ -119,7 +122,10 @@ int main() {
+     std::unique_ptr<GameData> gameData;
+     std::string dataErrorMessage;
+     std::map<std::string, GLuint> heroTextures, monsterTextures;
++    int roleW = 0, roleH = 0;
+     GLuint bgTexture = 0;
++    GLuint warriorTexture = 0, healerTexture = 0; // role cards in the lobby (SCRUM-35)
++    LobbyRole myRole = LobbyRole::None;
+     int w = 0, h = 0;
+     try {
+         gameData = std::make_unique<GameData>(GameData::defaultDataDirectory());
+@@ -138,6 +144,8 @@ int main() {
+         std::cerr << dataErrorMessage << "\n";
+     }
+     LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &w, &h);
++    LoadTextureFromFile(projectPath("assets/Warrior_Artwork.png").c_str(), &warriorTexture, &roleW, &roleH);
++    LoadTextureFromFile(projectPath("assets/Healer_Artwork.png").c_str(), &healerTexture, &roleW, &roleH);
+ 
+     auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) {
+         auto it = textures.find(key);
+@@ -299,19 +307,6 @@ int main() {
+                     startConnecting(serverBuf, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
+                 }
+ 
+-                if (chosen)
+-                {
+-                    ImGui::PopStyleColor();
+-                }
+-
+-                ImGui::EndDisabled();
+-
+-                if (clicked)
+-                {
+-                    cuurentPlayer.role = role;
+-                }
+-
+-                ImGui::SameLine();
+             }
+             if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
+             ImGui::End();
+@@ -330,6 +325,24 @@ int main() {
+                                   id == myId ? "  <- you" : "");
+             }
+             ImGui::Spacing();
++
++            // ROLE CARDS (SCRUM-35, Soroush). TODO: send the chosen role to the server and lock DM
++            // once someone has it - the server doesn't know about roles yet, so this is local only.
++            ImGui::Text("Your role: %s", roleName(myRole));
++            const LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Wizard, LobbyRole::Healer, LobbyRole::DM};
++            for (LobbyRole role : roles) {
++                const bool chosen = (role == myRole);
++                GLuint tex = role == LobbyRole::Warrior ? warriorTexture : role == LobbyRole::Healer ? healerTexture : 0;
++                if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
++                const bool clicked = tex ? ImGui::ImageButton(roleName(role), (ImTextureID)(intptr_t)tex, ImVec2(120, 120))
++                                         : ImGui::Button(roleName(role), ImVec2(120, 120));
++                if (chosen) ImGui::PopStyleColor();
++                if (clicked) myRole = role;
++                ImGui::SameLine();
++            }
++            ImGui::NewLine();
++            ImGui::Spacing();
++
+             if (myId == hostId) {
+                 if (ImGui::Button("Start match", ImVec2(200, 40)))
+                     client.send({{"t", net::msg::START}});
+diff --git a/src/Card.cpp b/src/Card.cpp
+index d714a4f..edea1ac 100644
+--- a/src/Card.cpp
++++ b/src/Card.cpp
+@@ -23,6 +23,12 @@ HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, std::optional<Hero
+         }
+     }
+ 
++HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, SpellTarget spellTarget, int freeze)
++    : HeroCard(std::move(n), c, e, v) {
++    target = spellTarget;
++    freezeRounds = freeze;
++}
++
+ bool HeroCard::canBePlayedBy(const Player& player) const {
+     const Hero* hero = dynamic_cast<const Hero*>(&player);
+ 
+diff --git a/src/Player.cpp b/src/Player.cpp
+index 178487c..3fec933 100644
+--- a/src/Player.cpp
++++ b/src/Player.cpp
+@@ -74,7 +74,8 @@ void Player::playCard(const Card& card, const std::vector<Targetable*>& targets)
+ 
+     if (hero != nullptr && heroCard != nullptr && heroCard->getEffect() == HeroEffect::SHIELD) {
+ 
+-        Hero* shieldTarget = dynamic_cast<Hero*>(&target);
++        // Shield always has exactly one target (playCard now receives a list since the spell merge)
++        Hero* shieldTarget = targets.size() == 1 ? dynamic_cast<Hero*>(targets.front()) : nullptr;
+ 
+         if (shieldTarget == nullptr) {
+             throw std::invalid_argument("Shield requires a hero target");
+-- 
+2.43.0
+
