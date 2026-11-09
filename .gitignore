@@ -20,3 +20,4 @@ bin/
 
 #ImGui writes this at runtime
 imgui.ini
+build-clang/

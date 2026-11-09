@@ -10,7 +10,8 @@
       "value": 10,
       "description": "Deal damage to one monster.",
       "temporary": true,
-      "_note": "effect ATTACK, value 10 and manaCost 7 come from the Sprint 1 requirements (team chat, 23.10.2026)."
+      "_note": "effect ATTACK, value 10 and manaCost 7 come from the Sprint 1 requirements (team chat, 23.10.2026).",
+      "image": "assets/Attack_Card.png"
     },
     {
       "id": "fireball",
@@ -22,7 +23,8 @@
       "target": "ALL_ENEMIES",
       "freezeRounds": 0,
       "description": "Deal damage to every enemy, including the boss.",
-      "temporary": true
+      "temporary": true,
+      "image": "assets/Fireball_Spell_Artwork.png"
     },
     {
       "id": "frost_bolt",
@@ -34,7 +36,8 @@
       "target": "ONE_ENEMY",
       "freezeRounds": 1,
       "description": "Damage one enemy. A regular monster skips its next attack.",
-      "temporary": true
+      "temporary": true,
+      "image": "assets/Ice_Spikes_Spell_Artwork.png"
     },
     {
       "id": "holy_lance",
@@ -47,6 +50,30 @@
       "freezeRounds": 0,
       "description": "Deal damage to the boss.",
       "temporary": true
+    },
+    {
+      "id": "heal",
+      "name": "Heal",
+      "side": "HEROES",
+      "effect": "HEAL",
+      "manaCost": 8,
+      "value": 15,
+      "description": "Restore health to one hero.",
+      "image": "assets/Heal_Card_Artwork.png",
+      "temporary": true,
+      "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
+    },
+    {
+      "id": "monster_attack",
+      "name": "Monster Attack",
+      "side": "DUNGEON_MASTER",
+      "effect": "ATTACK",
+      "manaCost": 3,
+      "value": 12,
+      "description": "Order one monster to attack one hero at the end of the DM turn.",
+      "image": "assets/Attack_Card.png",
+      "temporary": true,
+      "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
     }
   ]
 }

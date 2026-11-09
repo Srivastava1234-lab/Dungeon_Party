@@ -48,6 +48,7 @@ struct CardDefinition {
     int manaCost = 0;          // mana needed to play the card
     int value = 0;             // strength of the effect (damage, healing, ...)
     std::string description;   // short text for the HUD (without numbers)
+    std::string image;         // optional card artwork, relative to the project folder ("" = none)
     bool temporary = true;     // true = values not confirmed by Irma yet
 };
 
@@ -115,6 +116,9 @@ struct LevelDefinition {
     std::vector<LevelMonsterEntry> monsters;
     std::string bossId;
     int bossArrivalRound = 0;
+    // Optional "dungeonMaster" block: the DM's mana and starting deck (DUNGEON_MASTER cards only).
+    int dmMaxMana = 10;
+    std::vector<DeckEntry> dmDeck;
     bool temporary = true;
 };
 

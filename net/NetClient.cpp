@@ -93,3 +93,22 @@ bool NetClient::send(const nlohmann::json& message) {
 std::vector<nlohmann::json> NetClient::takeMessages() {
     return std::exchange(inbox, {});
 }
+
+std::string NetClient::localNetworkAddress() const {
+    // "Connecting" a UDP socket sends nothing; it only makes the OS pick the network interface
+    // it would use to reach the internet, whose address we then read back.
+    ENetSocket socket = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+    if (socket == ENET_SOCKET_NULL) return "";
+    std::string result;
+    ENetAddress remote{};
+    if (enet_address_set_host_ip(&remote, "8.8.8.8") == 0) {
+        remote.port = 53;
+        ENetAddress local{};
+        char text[64] = {};
+        if (enet_socket_connect(socket, &remote) == 0 && enet_socket_get_address(socket, &local) == 0 &&
+            enet_address_get_host_ip(&local, text, sizeof(text)) == 0)
+            result = text;
+    }
+    enet_socket_destroy(socket);
+    return result == "0.0.0.0" ? "" : result;
+}

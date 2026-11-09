@@ -25,8 +25,11 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 |----------|---------------------|---------------------------------------------|
 | `create` | `name`              | make a room; you become host                |
 | `join`   | `name`, `code`      | join a room that hasn't started yet         |
+| `role`   | `role`              | lobby: `"dm"` or a hero id (`"warrior"`, `"healer"`); only one DM per room |
 | `start`  | -                   | host only                                   |
-| `play`   | `card`, `target`    | index into your hand, index into `monsters` |
+| `play`   | `card`, `target`, `targetType` | hero: hand index, then `"monster"` + index into `monsters` or `"hero"` + index into `heroes` (Heal) |
+| `command`| `card`, `monster`, `hero` | DM: order monster #m to attack hero #h with DM card #c; happens on End turn |
+| `boss`   | `hero`              | DM: order the final boss to attack hero #h (once it has arrived) |
 | `end`    | -                   | end your turn                               |
 | `leave`  | -                   | leave the room (closing the connection also works) |
 
@@ -35,24 +38,32 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 | t        | fields                                    | notes |
 |----------|-------------------------------------------|-------|
 | `joined` | `code`, `you`                             | you are in the room; `you` is your player id (`p1`, `p2`, ...) |
-| `lobby`  | `code`, `host`, `players[{id,name}]`      | sent to the whole room whenever it changes |
+| `lobby`  | `code`, `host`, `players[{id,name,role}]` | sent to the whole room whenever it changes |
 | `state`  | see below                                 | sent to each player after every change |
 | `error`  | `msg`                                     | your request was rejected (wrong turn, not enough mana, ...) |
 | `closed` | `msg`                                     | room closed |
 
-`state`: `code, you, host, round, phase, active (player id or "dm"), winner (null | "HEROES" | "DUNGEON_MASTER"),
-heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive}],
-hand[{name, cost, effect, value}]` (only yours), `cardsPlayed`.
+`state`: `code, you, host, role ("hero" | "dm"), round, phase, active (player id), winner (null | "HEROES" | "DUNGEON_MASTER"),
+heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive, boss}],
+dm{id, name, human, connected, mana*, maxMana*}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
+`cardsPlayed`, `canBossAttack*`. Fields marked * are only sent to the DM.
 
-## Rules in this prototype
+## Rules
 
-- Everyone plays the hero `warrior`; decks come from `heroes.json` + `cards.json`.
-- The Dungeon Master is a server bot that ends its turn immediately.
-  To make it a human: give `Member` a `role` field, let one lobby member pick DM, add them as the
-  `DungeonMaster` instead of the bot, and add a `queue` message that calls `Match::queueMonsterAttack`.
+- Players pick a role in the lobby. No role = the level's default hero (`defaultHeroes` in the level file).
+- Heroes come from `heroes.json`, the DM's mana and deck from the `dungeonMaster` block in the level file.
+- No human DM = the computer plays the DM: each living monster attacks the weakest hero, and the boss attacks too.
+- The final boss from the level file arrives in its `arrivalRound`; its health is `healthPerHero` x number of heroes.
 - If the host leaves the lobby, the next player becomes host. If someone leaves during the match, their hero
   stays and their turns are skipped. Rejoining is not supported yet.
 - The room closes when its last player leaves.
+
+## Hosting: this computer vs. a server
+
+- **This computer**: the game runs a RoomServer inside itself. Only players on the same network can reach it,
+  unless the router forwards UDP 7777 to this computer.
+- **A server**: the game connects to a `dungeon_server` somewhere else (e.g. the team laptop). This is the way to
+  play across networks - that machine must be reachable (port forwarding or Tailscale).
 
 ## Running it
 

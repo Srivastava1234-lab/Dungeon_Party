@@ -1,0 +1,1819 @@
+From 26d10f223d34b7b9a89170a374ab4d671132b683 Mon Sep 17 00:00:00 2001
+From: Akshat Srivastava <akshat.sanya@gmail.com>
+Date: Mon, 9 Nov 2026 19:31:31 +0000
+Subject: [PATCH] Roles, playable Dungeon Master, artwork, hosting on a server
+
+Networking
+- Menu: host on this computer or on a server address (dedicated dungeon_server),
+  so rooms can be played across networks when that server is reachable
+- Lobby shows this computer's local address when hosting locally
+- Help popup explaining hosting options
+
+Roles / Dungeon Master
+- Lobby role choice is sent to the server; only one DM per room
+- Human DM: order monsters (card -> monster -> hero) and the final boss; attacks run on End turn
+- Computer DM now attacks (each monster hits the weakest hero, boss too)
+- Final boss from the level file is configured and arrives in its round
+- Healer hero, Heal card (played on heroes), Monster Attack DM card, DM deck in level_1
+  (all placeholder values marked temporary - confirm with Irma)
+
+Artwork
+- Menu background, Help button, card artwork (+ empty card design fallback),
+  Healer/boss artwork, Heroes_Win/Heroes_Lose game-over screen
+- Fix: widgets used the name as ImGui ID, so two Goblins / two Strike cards merged into one
+
+Data loader
+- Optional card "image" and level "dungeonMaster" { maxMana, startingDeck }
+
+Tests
+- net_tests: roles, DM uniqueness, DM commands damage the chosen hero, computer DM attacks, boss arrival
+---
+ .gitignore               |   1 +
+ data/cards.json          |  33 ++-
+ data/heroes.json         |  44 ++-
+ data/levels/level_1.json |  26 +-
+ include/GameData.h       |   4 +
+ include/Renderer.h       |   4 +-
+ main.cpp                 | 567 +++++++++++++++++++++++++++------------
+ net/NetClient.cpp        |  19 ++
+ net/NetClient.h          |   4 +
+ net/PROTOCOL.md          |  31 ++-
+ net/Protocol.h           |   7 +-
+ server/RoomServer.cpp    | 221 +++++++++++++--
+ server/RoomServer.h      |   7 +-
+ src/GameData.cpp         |  25 ++
+ src/Renderer.cpp         |  46 ++--
+ tests/net_tests.cpp      |  98 +++++++
+ 16 files changed, 893 insertions(+), 244 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index dbbc2c0..2a45c0f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -20,3 +20,4 @@ bin/
+ 
+ #ImGui writes this at runtime
+ imgui.ini
++build-clang/
+diff --git a/data/cards.json b/data/cards.json
+index 726edac..431ae59 100644
+--- a/data/cards.json
++++ b/data/cards.json
+@@ -10,7 +10,8 @@
+       "value": 10,
+       "description": "Deal damage to one monster.",
+       "temporary": true,
+-      "_note": "effect ATTACK, value 10 and manaCost 7 come from the Sprint 1 requirements (team chat, 23.10.2026)."
++      "_note": "effect ATTACK, value 10 and manaCost 7 come from the Sprint 1 requirements (team chat, 23.10.2026).",
++      "image": "assets/Attack_Card.png"
+     },
+     {
+       "id": "fireball",
+@@ -22,7 +23,8 @@
+       "target": "ALL_ENEMIES",
+       "freezeRounds": 0,
+       "description": "Deal damage to every enemy, including the boss.",
+-      "temporary": true
++      "temporary": true,
++      "image": "assets/Fireball_Spell_Artwork.png"
+     },
+     {
+       "id": "frost_bolt",
+@@ -34,7 +36,8 @@
+       "target": "ONE_ENEMY",
+       "freezeRounds": 1,
+       "description": "Damage one enemy. A regular monster skips its next attack.",
+-      "temporary": true
++      "temporary": true,
++      "image": "assets/Ice_Spikes_Spell_Artwork.png"
+     },
+     {
+       "id": "holy_lance",
+@@ -47,6 +50,30 @@
+       "freezeRounds": 0,
+       "description": "Deal damage to the boss.",
+       "temporary": true
++    },
++    {
++      "id": "heal",
++      "name": "Heal",
++      "side": "HEROES",
++      "effect": "HEAL",
++      "manaCost": 8,
++      "value": 15,
++      "description": "Restore health to one hero.",
++      "image": "assets/Heal_Card_Artwork.png",
++      "temporary": true,
++      "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
++    },
++    {
++      "id": "monster_attack",
++      "name": "Monster Attack",
++      "side": "DUNGEON_MASTER",
++      "effect": "ATTACK",
++      "manaCost": 3,
++      "value": 12,
++      "description": "Order one monster to attack one hero at the end of the DM turn.",
++      "image": "assets/Attack_Card.png",
++      "temporary": true,
++      "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
+     }
+   ]
+ }
+diff --git a/data/heroes.json b/data/heroes.json
+index 862b1c3..c8313b3 100644
+--- a/data/heroes.json
++++ b/data/heroes.json
+@@ -9,13 +9,49 @@
+       "maxMana": 50,
+       "image": "assets/Warrior_Artwork.png",
+       "startingDeck": [
+-        { "card": "strike", "count": 2 },
+-        { "card": "fireball", "count": 1 },
+-        { "card": "frost_bolt", "count": 1 },
+-        { "card": "holy_lance", "count": 1 }
++        {
++          "card": "strike",
++          "count": 2
++        },
++        {
++          "card": "fireball",
++          "count": 1
++        },
++        {
++          "card": "frost_bolt",
++          "count": 1
++        },
++        {
++          "card": "holy_lance",
++          "count": 1
++        }
+       ],
+       "temporary": true,
+       "_note": "Sprint 2 playtest deck: two Strikes and one copy of each draft spell. Health and mana retain the Sprint 1 values. The image is the warrior artwork in assets/."
++    },
++    {
++      "id": "healer",
++      "name": "Healer",
++      "heroClass": "CLERIC",
++      "maxHealth": 80,
++      "maxMana": 50,
++      "image": "assets/Healer_Artwork.png",
++      "startingDeck": [
++        {
++          "card": "heal",
++          "count": 3
++        },
++        {
++          "card": "strike",
++          "count": 2
++        },
++        {
++          "card": "frost_bolt",
++          "count": 1
++        }
++      ],
++      "temporary": true,
++      "_note": "Placeholder values (Sprint 2 networking): needed so the Healer role in the lobby works. Confirm with Irma."
+     }
+   ]
+ }
+diff --git a/data/levels/level_1.json b/data/levels/level_1.json
+index cdce4ae..8be5cbe 100644
+--- a/data/levels/level_1.json
++++ b/data/levels/level_1.json
+@@ -3,10 +3,28 @@
+   "number": 1,
+   "name": "Level 1",
+   "maxRounds": 8,
+-  "boss": { "monster": "final_boss", "arrivalRound": 4 },
+-  "defaultHeroes": ["warrior"],
++  "boss": {
++    "monster": "final_boss",
++    "arrivalRound": 4
++  },
++  "defaultHeroes": [
++    "warrior"
++  ],
+   "monsters": [
+-    { "monster": "goblin", "countPerHero": 1 }
++    {
++      "monster": "goblin",
++      "countPerHero": 1
++    }
+   ],
+-  "temporary": true
++  "temporary": true,
++  "dungeonMaster": {
++    "maxMana": 10,
++    "startingDeck": [
++      {
++        "card": "monster_attack",
++        "count": 12
++      }
++    ],
++    "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
++  }
+ }
+diff --git a/include/GameData.h b/include/GameData.h
+index a99e87f..ca4e3dd 100644
+--- a/include/GameData.h
++++ b/include/GameData.h
+@@ -48,6 +48,7 @@ struct CardDefinition {
+     int manaCost = 0;          // mana needed to play the card
+     int value = 0;             // strength of the effect (damage, healing, ...)
+     std::string description;   // short text for the HUD (without numbers)
++    std::string image;         // optional card artwork, relative to the project folder ("" = none)
+     bool temporary = true;     // true = values not confirmed by Irma yet
+ };
+ 
+@@ -115,6 +116,9 @@ struct LevelDefinition {
+     std::vector<LevelMonsterEntry> monsters;
+     std::string bossId;
+     int bossArrivalRound = 0;
++    // Optional "dungeonMaster" block: the DM's mana and starting deck (DUNGEON_MASTER cards only).
++    int dmMaxMana = 10;
++    std::vector<DeckEntry> dmDeck;
+     bool temporary = true;
+ };
+ 
+diff --git a/include/Renderer.h b/include/Renderer.h
+index 259c405..8623499 100644
+--- a/include/Renderer.h
++++ b/include/Renderer.h
+@@ -29,12 +29,14 @@ struct CardView {
+     int manaCost;
+     HeroEffect effect;
+     int value;
++    GLuint textureID = 0;     // card artwork (0 = text only)
++    std::string effectText;   // overrides the generated effect line when not empty (e.g. DM cards)
+ };
+ 
+ enum class Screen { Start, Menu, Lobby, Battle};
+ 
+ bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_width, int* out_height);
+-bool drawCharacter(const Character& c);
++bool drawCharacter(const Character& c, float scale = 1.0f, bool highlighted = false);
+ bool drawCard(const CardView& c, bool playable, bool selected);
+ void drawTurnIndicator(const Match& match);
+ class Renderer {
+diff --git a/main.cpp b/main.cpp
+index f0b342a..61c43ca 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -1,7 +1,18 @@
++// Dungeon Party - game client
++//
++// Start -> Menu (Host or Join) -> Connecting -> Lobby (pick a role) -> Battle
++//
++// All game state comes from a RoomServer. "Host on this computer" starts one inside this
++// program (a listen server); "Host on a server" uses a dungeon_server running somewhere else,
++// e.g. the spare laptop. Players on OTHER networks can only reach a server that is reachable
++// from the internet (port forwarding or Tailscale) - see net/PROTOCOL.md.
++
+ #include <glad/glad.h>
+ #include <GLFW/glfw3.h>
+ 
++#include <algorithm>
+ #include <cstdint>
++#include <cstdio>
+ #include <exception>
+ #include <filesystem>
+ #include <iostream>
+@@ -31,45 +42,67 @@ std::string projectPath(const std::string& relative) {
+     return relative;
+ #endif
+ }
+-// An enum cannot be printed using ImGui::text so we need to switch it to its equivalent str/char value
+-static const char* roleName(LobbyRole role){
+-    switch (role)
+-    {
+-    case LobbyRole::Warrior:
+-        return "Warrior";
+-
+-    case LobbyRole::Healer:
+-        return "Healer";
+-
+-    case LobbyRole::Wizard:
+-        return "Wizard";
+-    
+-    case LobbyRole::DM:
+-        return "DM";
++
++// ---- Roles (SCRUM-35). The server only knows role ids: "warrior", "healer" (hero ids) and "dm".
++
++const char* roleName(LobbyRole role) {
++    switch (role) {
++        case LobbyRole::Warrior: return "Warrior";
++        case LobbyRole::Healer:  return "Healer";
++        case LobbyRole::Wizard:  return "Wizard";
++        case LobbyRole::DM:      return "Dungeon Master";
++        case LobbyRole::None:    return "not chosen";
+     }
+     return "";
+ }
+ 
+-// Start -> Menu (Host or Join) -> Connecting -> Lobby -> Battle
+-// (Your teammate's Character/Name screen can easily slot between Start and Menu!)
++std::string roleId(LobbyRole role) {
++    switch (role) {
++        case LobbyRole::Warrior: return "warrior";
++        case LobbyRole::Healer:  return "healer";
++        case LobbyRole::DM:      return net::DM_ROLE;
++        default:                 return "";
++    }
++}
++
++LobbyRole roleFromId(const std::string& id) {
++    if (id == "warrior") return LobbyRole::Warrior;
++    if (id == "healer") return LobbyRole::Healer;
++    if (id == net::DM_ROLE) return LobbyRole::DM;
++    return LobbyRole::None;
++}
++
+ enum class OnlineScreen { Start, Menu, Connecting, Lobby, Battle };
+ 
+ HeroEffect effectFromName(const std::string& name) {
+     if (name == "HEAL") return HeroEffect::HEAL;
+     if (name == "BUFF") return HeroEffect::BUFF;
+     if (name == "SPELL") return HeroEffect::SPELL;
++    if (name == "SHIELD") return HeroEffect::SHIELD;
++    if (name == "FIREBALL") return HeroEffect::FIREBALL;
+     return HeroEffect::ATTACK;
+ }
+ 
++// Cards that are played on a hero instead of a monster
++bool targetsHero(const std::string& effect) { return effect == "HEAL" || effect == "SHIELD"; }
++
++// Safe readers: the state comes over the network, so a missing field must not crash the client.
+ int intOr(const json& j, const char* key, int fallback = 0) {
+     auto it = j.find(key);
+     return (it != j.end() && it->is_number_integer()) ? it->get<int>() : fallback;
+ }
+-
+ std::string strOr(const json& j, const char* key, const std::string& fallback = "") {
+     auto it = j.find(key);
+     return (it != j.end() && it->is_string()) ? it->get<std::string>() : fallback;
+ }
++bool boolOr(const json& j, const char* key, bool fallback = false) {
++    auto it = j.find(key);
++    return (it != j.end() && it->is_boolean()) ? it->get<bool>() : fallback;
++}
++
++bool isThisComputer(const std::string& address) {
++    return address.empty() || address == "127.0.0.1" || address == "localhost";
++}
+ 
+ void drawRoomCode(const std::string& code, float fontScale) {
+     ImGui::SetWindowFontScale(fontScale);
+@@ -79,13 +112,47 @@ void drawRoomCode(const std::string& code, float fontScale) {
+     if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(code.c_str());
+ }
+ 
+-void beginFullscreenWindow(const char* name) {
++void beginFullscreenWindow(const char* name, bool transparent = false) {
+     ImGui::SetNextWindowPos(ImVec2(0, 0));
+     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
++    if (transparent) ImGui::SetNextWindowBgAlpha(0.55f);
+     ImGui::Begin(name, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+ }
+ 
++// Draws a picture behind every window, stretched to the whole screen.
++void drawBackground(GLuint texture) {
++    if (!texture) return;
++    ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)(intptr_t)texture, ImVec2(0, 0), ImGui::GetIO().DisplaySize);
++}
++
++void drawNotice(const std::string& notice) {
++    if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
++}
++
++// Help popup, opened with the Help_Button.png button on the start and menu screens.
++void drawHelpPopup() {
++    ImGui::SetNextWindowSize(ImVec2(560, 0));
++    if (ImGui::BeginPopupModal("How to play", nullptr, ImGuiWindowFlags_NoResize)) {
++        ImGui::TextWrapped("Hosting");
++        ImGui::BulletText("This computer: the game runs the server itself. Friends on the SAME\n"
++                          "network join with the address shown in your lobby.");
++        ImGui::BulletText("A server: enter the address of a computer running dungeon_server\n"
++                          "(for example the team laptop). Use this to play across different networks.");
++        ImGui::BulletText("Different networks only work if that server is reachable: port\n"
++                          "forwarding of UDP 7777 on its router, or everyone in the same Tailscale network.");
++        ImGui::Spacing();
++        ImGui::TextWrapped("Playing");
++        ImGui::BulletText("Heroes: pick a card, then click a monster (or a hero for Heal).");
++        ImGui::BulletText("Dungeon Master: pick an attack card, click a monster, then the hero it\n"
++                          "should attack. Orders happen when you press End turn.");
++        ImGui::BulletText("The final boss arrives in a later round. Defeat it to win.");
++        ImGui::Spacing();
++        if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
++        ImGui::EndPopup();
++    }
++}
++
+ } // namespace
+ 
+ int main() {
+@@ -100,7 +167,7 @@ int main() {
+     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+ #endif
+ 
+-    GLFWwindow* window = glfwCreateWindow(1000, 650, "Dungeon Party", nullptr, nullptr);
++    GLFWwindow* window = glfwCreateWindow(1280, 760, "Dungeon Party", nullptr, nullptr);
+     if (!window) {
+         glfwTerminate();
+         return -1;
+@@ -118,42 +185,50 @@ int main() {
+     ImGui_ImplGlfw_InitForOpenGL(window, true);
+     ImGui_ImplOpenGL3_Init("#version 330");
+ 
+-    // Load GameData and Textures
++    // ---- Game data and artwork. Every picture path comes from the data files or assets/.
+     std::unique_ptr<GameData> gameData;
+     std::string dataErrorMessage;
+-    std::map<std::string, GLuint> heroTextures, monsterTextures;
+-    int roleW = 0, roleH = 0;
+-    GLuint bgTexture = 0;
+-    GLuint warriorTexture = 0, healerTexture = 0; // role cards in the lobby (SCRUM-35)
+-    LobbyRole myRole = LobbyRole::None;
++    std::map<std::string, GLuint> heroTextures;    // by hero id ("warrior", "healer")
++    std::map<std::string, GLuint> monsterTextures; // by monster name ("Goblin", "Final Boss")
++    std::map<std::string, GLuint> cardTextures;    // by card name ("Strike", "Heal", ...)
+     int w = 0, h = 0;
++    auto loadTexture = [&](const std::string& relativePath) {
++        GLuint tex = 0;
++        if (!relativePath.empty()) LoadTextureFromFile(projectPath(relativePath).c_str(), &tex, &w, &h);
++        return tex;
++    };
+     try {
+         gameData = std::make_unique<GameData>(GameData::defaultDataDirectory());
+-        for (const auto& hero : gameData->getHeroes()) {
+-            GLuint tex = 0;
+-            if (!hero.image.empty() && LoadTextureFromFile(projectPath(hero.image).c_str(), &tex, &w, &h))
+-                heroTextures[hero.id] = tex;
+-        }
+-        for (const auto& monster : gameData->getMonsters()) {
+-            GLuint tex = 0;
+-            if (!monster.image.empty() && LoadTextureFromFile(projectPath(monster.image).c_str(), &tex, &w, &h))
+-                monsterTextures[monster.name] = tex;
+-        }
++        for (const auto& hero : gameData->getHeroes())
++            if (GLuint tex = loadTexture(hero.image)) heroTextures[hero.id] = tex;
++        for (const auto& monster : gameData->getMonsters())
++            if (GLuint tex = loadTexture(monster.image)) monsterTextures[monster.name] = tex;
++        for (const auto& card : gameData->getCards())
++            if (GLuint tex = loadTexture(card.image)) cardTextures[card.name] = tex;
+     } catch (const std::exception& e) {
+         dataErrorMessage = std::string("Could not load game data:\n") + e.what();
+         std::cerr << dataErrorMessage << "\n";
+     }
+-    LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &w, &h);
+-    LoadTextureFromFile(projectPath("assets/Warrior_Artwork.png").c_str(), &warriorTexture, &roleW, &roleH);
+-    LoadTextureFromFile(projectPath("assets/Healer_Artwork.png").c_str(), &healerTexture, &roleW, &roleH);
++    const GLuint battleBackground = loadTexture("assets/Level_1_Artwork.png");
++    const GLuint menuBackground = loadTexture("assets/Menu_Background_AI_Generated.png");
++    const GLuint helpButton = loadTexture("assets/Help_Button.png");
++    const GLuint heroesWinPicture = loadTexture("assets/Heroes_Win.png");
++    const GLuint heroesLosePicture = loadTexture("assets/Heroes_Lose.png");
++    const GLuint emptyCardPicture = loadTexture("assets/Empty_Card_Design.png"); // cards without their own art
+ 
+     auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) {
+         auto it = textures.find(key);
+         return it == textures.end() ? GLuint(0) : it->second;
+     };
++    auto roleTexture = [&](LobbyRole role) -> GLuint {
++        if (role == LobbyRole::Warrior) return textureOr0(heroTextures, "warrior");
++        if (role == LobbyRole::Healer) return textureOr0(heroTextures, "healer");
++        if (role == LobbyRole::DM) return textureOr0(monsterTextures, "Final Boss");
++        return 0;
++    };
+ 
+-    // ---- Listen Server & Client state
+-    std::unique_ptr<RoomServer> localServer; // Only created when this player clicks "Host"
++    // ---- Network state
++    std::unique_ptr<RoomServer> localServer; // only created when this player hosts on this computer
+     NetClient client;
+     OnlineScreen screen = OnlineScreen::Start;
+     json pendingRequest;  // "create" or "join", sent as soon as the connection is up
+@@ -161,27 +236,42 @@ int main() {
+     std::string roomCode, myId, hostId;
+     json lobbyPlayers = json::array();
+     json state;           // latest match state from the server
+-    int selectedCard = -1;
++    const std::string localAddress = client.localNetworkAddress();
+ 
+     char nameBuf[net::MAX_NAME_LENGTH + 1] = "Player";
+-    char serverBuf[128] = "127.0.0.1";
++    char serverBuf[128] = "";       // address to JOIN
++    char hostServerBuf[128] = "";   // address of a dedicated server to HOST on
++    int hostWhere = 0;              // 0 = this computer, 1 = a server
+     int port = net::DEFAULT_PORT;
+     char codeBuf[16] = "";
+ 
++    // ---- Battle selection: what the player has clicked so far
++    int selectedCard = -1;     // hand index
++    int selectedMonster = -1;  // DM: the monster that will attack
++    bool bossOrder = false;    // DM: choosing a target for the final boss
++    std::vector<std::string> dmOrders; // DM: orders accepted this turn (shown as a list)
++    std::string pendingOrder;          // DM: order sent, waiting for the server to accept it
++    std::string lastActive;
++
++    auto clearSelection = [&] {
++        selectedCard = -1;
++        selectedMonster = -1;
++        bossOrder = false;
++    };
++
+     auto backToMenu = [&](const std::string& why) {
+         client.disconnect();
+         screen = OnlineScreen::Menu;
+         notice = why;
+-        roomCode.clear();
+-        myId.clear();
+-        hostId.clear();
++        roomCode.clear(); myId.clear(); hostId.clear();
+         state = nullptr;
+-        selectedCard = -1;
++        clearSelection();
++        dmOrders.clear(); pendingOrder.clear(); lastActive.clear();
+     };
+ 
+-    auto startConnecting = [&](const char* targetIp, json request) {
++    auto startConnecting = [&](const std::string& address, json request) {
+         notice.clear();
+-        if (!client.connect(targetIp, static_cast<std::uint16_t>(port))) {
++        if (!client.connect(address, static_cast<std::uint16_t>(port))) {
+             notice = client.lastError();
+             return;
+         }
+@@ -192,12 +282,10 @@ int main() {
+     while (!glfwWindowShouldClose(window)) {
+         glfwPollEvents();
+ 
+-        // ---- 1. Tick embedded Listen Server if this PC is hosting
+-        if (localServer) {
+-            localServer->poll(0);
+-        }
++        // ---- 1. Run the embedded server if this computer is hosting
++        if (localServer) localServer->poll(0);
+ 
+-        // ---- 2. Tick Network Client: once per frame, never blocks
++        // ---- 2. Network client: once per frame, never blocks
+         client.poll();
+         if (screen != OnlineScreen::Start && screen != OnlineScreen::Menu &&
+             client.status() == NetClient::Status::Disconnected) {
+@@ -214,6 +302,7 @@ int main() {
+                 roomCode = strOr(message, "code");
+                 myId = strOr(message, "you");
+                 screen = OnlineScreen::Lobby;
++                notice.clear();
+             } else if (type == net::msg::LOBBY) {
+                 roomCode = strOr(message, "code", roomCode);
+                 hostId = strOr(message, "host");
+@@ -223,8 +312,17 @@ int main() {
+                 state = message;
+                 hostId = strOr(message, "host", hostId);
+                 screen = OnlineScreen::Battle;
++                const std::string active = message["active"].is_string() ? message["active"].get<std::string>() : "";
++                if (active != lastActive) { // a new turn started: forget the old selection and orders
++                    lastActive = active;
++                    clearSelection();
++                    dmOrders.clear();
++                    pendingOrder.clear();
++                }
++                if (!pendingOrder.empty()) { dmOrders.push_back(pendingOrder); pendingOrder.clear(); }
+             } else if (type == net::msg::ERROR) {
+                 notice = strOr(message, "msg");
++                pendingOrder.clear();
+                 if (screen == OnlineScreen::Connecting) backToMenu(notice);
+             } else if (type == net::msg::CLOSED) {
+                 backToMenu(strOr(message, "msg", "The room was closed"));
+@@ -236,217 +334,330 @@ int main() {
+         ImGui_ImplOpenGL3_NewFrame();
+         ImGui_ImplGlfw_NewFrame();
+         ImGui::NewFrame();
++        ImGuiIO& io = ImGui::GetIO();
+ 
+-        // ---- SCREEN 1: Start Screen
++        // ================= SCREEN 1: Start =================
+         if (screen == OnlineScreen::Start) {
+-            ImGuiIO& io = ImGui::GetIO();
+-            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+-                                    ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+-            ImGui::SetNextWindowSize(ImVec2(400, 220));
+-            ImGui::Begin("Start", nullptr,
+-                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
++            drawBackground(menuBackground);
++            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
++            ImGui::SetNextWindowSize(ImVec2(400, 0));
++            ImGui::SetNextWindowBgAlpha(0.85f);
++            ImGui::Begin("Start", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+             ImGui::SetWindowFontScale(2.0f);
+             ImGui::TextUnformatted("DUNGEON PARTY");
+             ImGui::SetWindowFontScale(1.0f);
+-
+             if (!dataErrorMessage.empty()) {
+                 ImGui::TextWrapped("%s", dataErrorMessage.c_str());
+-            } else if (ImGui::Button("Start match", ImVec2(-1, 70))) {
++            } else if (ImGui::Button("Play", ImVec2(-1, 70))) {
+                 screen = OnlineScreen::Menu;
+             }
+             ImGui::End();
+         }
+-        // ---- SCREEN 2: Host / Join Menu
++        // ================= SCREEN 2: Host / Join =================
+         else if (screen == OnlineScreen::Menu || screen == OnlineScreen::Connecting) {
+-            ImGuiIO& io = ImGui::GetIO();
+-            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+-                                    ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+-            ImGui::SetNextWindowSize(ImVec2(460, 0));
+-            ImGui::Begin("Menu", nullptr,
+-                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
++            drawBackground(menuBackground);
++            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
++            ImGui::SetNextWindowSize(ImVec2(500, 0));
++            ImGui::SetNextWindowBgAlpha(0.9f);
++            ImGui::Begin("Menu", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+             ImGui::SetWindowFontScale(2.0f);
+-            ImGui::TextUnformatted("MULTIPLAYER LOBBY");
++            ImGui::TextUnformatted("MULTIPLAYER");
+             ImGui::SetWindowFontScale(1.0f);
++            ImGui::SameLine(ImGui::GetWindowWidth() - 52);
++            const bool helpClicked = helpButton ? ImGui::ImageButton("help", (ImTextureID)(intptr_t)helpButton, ImVec2(28, 28))
++                                                : ImGui::Button("?", ImVec2(36, 36));
++            if (helpClicked) ImGui::OpenPopup("How to play");
++            drawHelpPopup();
+             ImGui::Separator();
+ 
+             if (screen == OnlineScreen::Connecting) {
+-                ImGui::Text("Connecting to %s:%d ...", serverBuf, port);
++                ImGui::Text("Connecting ...");
+                 if (ImGui::Button("Cancel", ImVec2(-1, 0))) backToMenu("");
+             } else {
+                 ImGui::InputText("Your name", nameBuf, sizeof(nameBuf));
++                ImGui::InputInt("Port", &port);
+                 ImGui::Spacing();
+                 ImGui::Separator();
+ 
+-                // HOST SECTION (Starts embedded Listen Server automatically)
+-                ImGui::TextUnformatted("Host on this PC (Listen Server):");
+-                if (ImGui::Button("Host a new room", ImVec2(-1, 40))) {
+-                    if (!localServer && gameData) {
+-                        try {
+-                            localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(port));
+-                        } catch (const std::exception& e) {
+-                            // If another window on this same PC is already hosting on port 7777,
+-                            // we can still connect to 127.0.0.1 and create a room on it!
+-                            std::cerr << "Local server note: " << e.what() << "\n";
++                // ---- Host
++                ImGui::TextUnformatted("Host a new room on:");
++                ImGui::RadioButton("This computer", &hostWhere, 0);
++                ImGui::SameLine();
++                ImGui::RadioButton("A server", &hostWhere, 1);
++                if (hostWhere == 1)
++                    ImGui::InputTextWithHint("Server address##host", "e.g. 100.101.102.103 or team.duckdns.org",
++                                             hostServerBuf, sizeof(hostServerBuf));
++                else
++                    ImGui::TextDisabled("Friends on other networks can't reach this computer\n"
++                                        "unless your router forwards UDP %d to it (see ?).", port);
++
++                if (ImGui::Button("Host", ImVec2(-1, 40))) {
++                    const json create = {{"t", net::msg::CREATE}, {"name", nameBuf}};
++                    if (hostWhere == 1 && !isThisComputer(hostServerBuf)) {
++                        startConnecting(hostServerBuf, create); // a dedicated dungeon_server somewhere else
++                    } else {
++                        if (!localServer && gameData) {
++                            try {
++                                localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(port));
++                            } catch (const std::exception& e) {
++                                // Port already taken (e.g. a second window on this computer is hosting):
++                                // we can still create a room on that server.
++                                std::cerr << "Local server note: " << e.what() << "\n";
++                            }
+                         }
++                        startConnecting("127.0.0.1", create);
+                     }
+-                    std::snprintf(serverBuf, sizeof(serverBuf), "127.0.0.1");
+-                    startConnecting("127.0.0.1", {{"t", net::msg::CREATE}, {"name", nameBuf}});
+                 }
+ 
+                 ImGui::Spacing();
+                 ImGui::Separator();
+ 
+-                // JOIN SECTION (Connects to Host's IP + Room Code)
+-                ImGui::TextUnformatted("Join an existing room:");
+-                ImGui::InputText("Host IP", serverBuf, sizeof(serverBuf));
+-                ImGui::InputInt("Port", &port);
+-                ImGui::InputTextWithHint("##code", "Room code (e.g. K7RM2Q)", codeBuf, sizeof(codeBuf),
+-                                         ImGuiInputTextFlags_CharsUppercase);
++                // ---- Join
++                ImGui::TextUnformatted("Join a room:");
++                ImGui::InputTextWithHint("Server address##join", "the address the host gave you", serverBuf, sizeof(serverBuf));
++                ImGui::InputTextWithHint("##code", "Room code (e.g. K7RM2Q)", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
+                 ImGui::SameLine();
+                 if (ImGui::Button("Join", ImVec2(-1, 0))) {
+-                    startConnecting(serverBuf, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
++                    const std::string address = isThisComputer(serverBuf) ? "127.0.0.1" : serverBuf;
++                    startConnecting(address, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
+                 }
+-
+             }
+-            if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
++            drawNotice(notice);
+             ImGui::End();
+         }
+-        // ---- SCREEN 3: Waiting Room Lobby
++        // ================= SCREEN 3: Lobby =================
+         else if (screen == OnlineScreen::Lobby) {
+-            beginFullscreenWindow("Lobby");
+-            drawRoomCode(roomCode, 2.0f);
++            drawBackground(menuBackground);
++            beginFullscreenWindow("Lobby", true);
++            drawRoomCode(roomCode, 2.0f); // top-left
++            if (localServer) {
++                ImGui::TextDisabled("Hosted on this computer. Same network: server address %s. Other networks: see ? in the menu.",
++                                    localAddress.empty() ? "(unknown - run ipconfig)" : localAddress.c_str());
++            }
+             ImGui::Separator();
+-            ImGui::Text("Give this code to your friends. Players (%zu/%zu):",
+-                        lobbyPlayers.size(), net::MAX_PLAYERS_PER_ROOM);
++
++            // Players and the roles the SERVER has confirmed
++            LobbyRole myRole = LobbyRole::None;
++            std::string dmTakenBy;
++            ImGui::Text("Players (%zu/%zu):", lobbyPlayers.size(), net::MAX_PLAYERS_PER_ROOM);
+             for (const auto& p : lobbyPlayers) {
+                 const std::string id = strOr(p, "id");
+-                ImGui::BulletText("%s%s%s", strOr(p, "name").c_str(),
+-                                  id == hostId ? "  (host)" : "",
+-                                  id == myId ? "  <- you" : "");
++                const LobbyRole role = roleFromId(strOr(p, "role"));
++                if (id == myId) myRole = role;
++                if (role == LobbyRole::DM && id != myId) dmTakenBy = strOr(p, "name");
++                ImGui::BulletText("%s - %s%s%s", strOr(p, "name").c_str(), roleName(role),
++                                  id == hostId ? "  (host)" : "", id == myId ? "  <- you" : "");
+             }
+             ImGui::Spacing();
+ 
+-            // ROLE CARDS (SCRUM-35, Soroush). TODO: send the chosen role to the server and lock DM
+-            // once someone has it - the server doesn't know about roles yet, so this is local only.
+-            ImGui::Text("Your role: %s", roleName(myRole));
+-            const LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Wizard, LobbyRole::Healer, LobbyRole::DM};
++            // ROLE CARDS (SCRUM-35, Soroush): clicking sends the role to the server.
++            ImGui::Text("Choose your role:");
++            const LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Healer, LobbyRole::Wizard, LobbyRole::DM};
+             for (LobbyRole role : roles) {
+-                const bool chosen = (role == myRole);
+-                GLuint tex = role == LobbyRole::Warrior ? warriorTexture : role == LobbyRole::Healer ? healerTexture : 0;
++                const bool noHeroData = role == LobbyRole::Wizard; // no wizard in heroes.json yet
++                const bool locked = noHeroData || (role == LobbyRole::DM && !dmTakenBy.empty());
++                const bool chosen = role == myRole;
++                ImGui::BeginGroup();
++                ImGui::BeginDisabled(locked);
+                 if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
+-                const bool clicked = tex ? ImGui::ImageButton(roleName(role), (ImTextureID)(intptr_t)tex, ImVec2(120, 120))
+-                                         : ImGui::Button(roleName(role), ImVec2(120, 120));
++                const GLuint tex = roleTexture(role);
++                const bool clicked = tex ? ImGui::ImageButton(roleName(role), (ImTextureID)(intptr_t)tex, ImVec2(120, 140))
++                                         : ImGui::Button(roleName(role), ImVec2(128, 148));
+                 if (chosen) ImGui::PopStyleColor();
+-                if (clicked) myRole = role;
+-                ImGui::SameLine();
++                ImGui::EndDisabled();
++                ImGui::TextUnformatted(roleName(role));
++                if (noHeroData) ImGui::TextDisabled("coming soon");
++                else if (role == LobbyRole::DM && !dmTakenBy.empty()) ImGui::TextDisabled("taken by %s", dmTakenBy.c_str());
++                ImGui::EndGroup();
++                if (clicked && !chosen) client.send({{"t", net::msg::ROLE}, {"role", roleId(role)}});
++                ImGui::SameLine(0, 18);
+             }
+             ImGui::NewLine();
+             ImGui::Spacing();
+ 
+             if (myId == hostId) {
+-                if (ImGui::Button("Start match", ImVec2(200, 40)))
+-                    client.send({{"t", net::msg::START}});
++                if (ImGui::Button("Start match", ImVec2(200, 40))) client.send({{"t", net::msg::START}});
++                ImGui::SameLine();
++                ImGui::TextDisabled("No DM chosen = the computer plays the DM.");
+             } else {
+                 ImGui::TextUnformatted("Waiting for the host to start...");
+             }
+-            ImGui::SameLine();
+-            if (ImGui::Button("Leave", ImVec2(100, 40))) backToMenu("");
+-            if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
++            if (ImGui::Button("Leave", ImVec2(100, 32))) backToMenu("");
++            drawNotice(notice);
+             ImGui::End();
+-
+         }
+-        // ---- SCREEN 4: Battle Screen
++        // ================= SCREEN 4: Battle =================
+         else if (screen == OnlineScreen::Battle && state.is_object()) {
+             beginFullscreenWindow("Battle");
+-            const bool myTurn = !state["active"].is_null() && strOr(state, "active") == myId;
++            const bool iAmDm = strOr(state, "role") == "dm";
++            const bool myTurn = state["active"].is_string() && strOr(state, "active") == myId;
++            const bool finished = !state["winner"].is_null();
++            const json heroes = state.value("heroes", json::array());
++            const json monsters = state.value("monsters", json::array());
++            const json hand = state.value("hand", json::array());
++            const json dm = state.value("dm", json::object());
++
++            std::string activeName = "Dungeon Master";
++            for (const auto& hero : heroes)
++                if (strOr(hero, "id") == strOr(state, "active")) activeName = strOr(hero, "name");
++            if (strOr(dm, "id") == strOr(state, "active")) activeName = strOr(dm, "name");
+ 
+-            // Top bar: room code top-left, then turn info
++            // ---- Top bar: room code top-left, then turn info
+             ImGui::BeginChild("TopBar", ImVec2(0, 44), true);
+             drawRoomCode(roomCode, 1.4f);
+-            ImGui::SameLine(220);
+-            if (!state["winner"].is_null()) {
+-                ImGui::Text("Round %d | %s win!", intOr(state, "round"),
+-                            strOr(state, "winner") == "HEROES" ? "Heroes" : "Dungeon Master");
+-            } else {
+-                std::string whose = "Dungeon Master";
+-                for (const auto& hero : state["heroes"])
+-                    if (strOr(hero, "id") == strOr(state, "active")) whose = strOr(hero, "name");
+-                ImGui::Text("Round %d | %s", intOr(state, "round"),
+-                            myTurn ? "YOUR TURN" : (whose + "'s turn").c_str());
+-                if (myTurn) {
+-                    ImGui::SameLine();
+-                    if (ImGui::Button("End turn")) {
+-                        client.send({{"t", net::msg::END}});
+-                        selectedCard = -1;
+-                    }
+-                }
++            ImGui::SameLine(230);
++            ImGui::Text("Round %d | %s", intOr(state, "round"), myTurn ? "YOUR TURN" : (activeName + "'s turn").c_str());
++            if (myTurn && !finished) {
++                ImGui::SameLine();
++                if (ImGui::Button("End turn")) { client.send({{"t", net::msg::END}}); clearSelection(); }
+             }
+             ImGui::SameLine();
++            ImGui::TextDisabled("| DM: %s%s", strOr(dm, "name").c_str(), iAmDm ? " (you)" : "");
++            if (iAmDm && dm.contains("mana")) { ImGui::SameLine(); ImGui::Text("Mana %d/%d", intOr(dm, "mana"), intOr(dm, "maxMana")); }
++            ImGui::SameLine(io.DisplaySize.x - 70);
+             if (ImGui::SmallButton("Leave")) backToMenu("");
+             ImGui::EndChild();
+ 
+-            // Battlefield
+-            ImGui::BeginChild("Battlefield", ImVec2(0, ImGui::GetWindowHeight() - 230), true);
+-            if (bgTexture) {
+-                ImGui::SetCursorPos(ImVec2(0, 0));
+-                ImGui::Image((ImTextureID)(intptr_t)bgTexture, ImGui::GetContentRegionAvail());
+-                ImGui::SetCursorPos(ImVec2(10, 10));
++            // ---- What to click next
++            std::string selectedEffect = (selectedCard >= 0 && selectedCard < (int)hand.size()) ? strOr(hand[selectedCard], "effect") : "";
++            std::string instruction;
++            if (!myTurn) instruction = "Waiting for " + activeName + "...";
++            else if (iAmDm) {
++                if (bossOrder) instruction = "Click the hero the FINAL BOSS should attack.";
++                else if (selectedCard < 0) instruction = "Pick an attack card (or Boss attack), then a monster, then the hero it attacks. Orders happen on End turn.";
++                else if (selectedMonster < 0) instruction = "Now click the monster that should attack.";
++                else instruction = "Now click the hero " + strOr(monsters[selectedMonster], "name") + " should attack.";
++            } else {
++                if (selectedCard < 0) instruction = "Pick a card from your hand.";
++                else if (targetsHero(selectedEffect)) instruction = "Click the hero to use it on.";
++                else instruction = "Click a monster to attack.";
+             }
+-            int drawn = 0;
+-            for (const auto& hero : state["heroes"]) {
+-                if (drawn++ > 0) ImGui::SameLine();
++            ImGui::TextUnformatted(instruction.c_str());
++            if (iAmDm && myTurn && state.value("canBossAttack", false)) {
++                ImGui::SameLine();
++                if (ImGui::SmallButton("Boss attack")) { clearSelection(); bossOrder = true; }
++            }
++            if (iAmDm && !dmOrders.empty()) {
++                std::string list;
++                for (const auto& order : dmOrders) list += (list.empty() ? "" : ", ") + order;
++                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1), "Orders: %s", list.c_str());
++            }
++            drawNotice(notice);
++
++            // ---- Battlefield
++            ImGui::BeginChild("Battlefield", ImVec2(0, ImGui::GetContentRegionAvail().y - 222), true, ImGuiWindowFlags_NoScrollbar);
++            const ImVec2 fieldSize = ImGui::GetContentRegionAvail();
++            if (battleBackground) {
++                const ImVec2 origin = ImGui::GetCursorScreenPos();
++                ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)battleBackground, origin,
++                                                     ImVec2(origin.x + fieldSize.x, origin.y + fieldSize.y));
++            }
++            int livingMonsters = 0;
++            for (const auto& m : monsters) if (boolOr(m, "alive")) ++livingMonsters;
++            const int figures = static_cast<int>(heroes.size()) + livingMonsters;
++            float scale = (fieldSize.x - 60.0f) / (figures * 250.0f);
++            scale = std::min(scale, (fieldSize.y - 10.0f) / 360.0f);
++            scale = std::max(0.4f, std::min(1.0f, scale));
++
++            for (std::size_t i = 0; i < heroes.size(); ++i) {
++                const json& hero = heroes[i];
++                if (i > 0) ImGui::SameLine();
+                 std::string label = strOr(hero, "name");
+                 if (strOr(hero, "id") == myId) label += " (you)";
+-                if (!hero.value("connected", true)) label += " [left]";
+-                drawCharacter({label, intOr(hero, "hp"), intOr(hero, "maxHp", 1),
+-                               intOr(hero, "mana"), intOr(hero, "maxMana"),
+-                               textureOr0(heroTextures, strOr(hero, "heroId"))});
++                if (strOr(hero, "id") == strOr(state, "active")) label += " *";
++                if (!boolOr(hero, "connected", true)) label += " [left]";
++                const bool canTarget = myTurn && ((iAmDm && (selectedMonster >= 0 || bossOrder)) ||
++                                                  (!iAmDm && selectedCard >= 0 && targetsHero(selectedEffect)));
++                ImGui::PushID(static_cast<int>(i));
++                const bool clicked = drawCharacter({label, intOr(hero, "hp"), intOr(hero, "maxHp", 1), intOr(hero, "mana"),
++                                                    intOr(hero, "maxMana"), textureOr0(heroTextures, strOr(hero, "heroId"))},
++                                                   scale, canTarget);
++                ImGui::PopID();
++                if (clicked && canTarget) {
++                    if (iAmDm && bossOrder) {
++                        client.send({{"t", net::msg::BOSS}, {"hero", i}});
++                        pendingOrder = "Boss -> " + strOr(hero, "name");
++                    } else if (iAmDm) {
++                        client.send({{"t", net::msg::COMMAND}, {"card", selectedCard}, {"monster", selectedMonster}, {"hero", i}});
++                        pendingOrder = strOr(monsters[selectedMonster], "name") + " -> " + strOr(hero, "name");
++                    } else {
++                        client.send({{"t", net::msg::PLAY}, {"card", selectedCard}, {"target", i}, {"targetType", "hero"}});
++                    }
++                    clearSelection();
++                    notice.clear();
++                }
+             }
+-            ImGui::SameLine(0, 60);
+-            drawn = 0;
+-            const json& monsters = state["monsters"];
++            ImGui::SameLine(0, 40);
++            int drawn = 0;
+             for (std::size_t i = 0; i < monsters.size(); ++i) {
+-                if (!monsters[i].value("alive", false)) continue;
++                const json& monster = monsters[i];
++                if (!boolOr(monster, "alive")) continue;
+                 if (drawn++ > 0) ImGui::SameLine();
+-                const bool clicked = drawCharacter({
+-                    strOr(monsters[i], "name"),
+-                    intOr(monsters[i], "hp"),
+-                    intOr(monsters[i], "maxHp", 1),
+-                    0, 0,
+-                    textureOr0(monsterTextures, strOr(monsters[i], "name"))
+-                });
+-                if (clicked && myTurn && selectedCard >= 0) {
+-                    client.send({{"t", net::msg::PLAY}, {"card", selectedCard}, {"target", i}});
+-                    selectedCard = -1;
++                const bool isBoss = boolOr(monster, "boss");
++                const bool canTarget = myTurn && selectedCard >= 0 &&
++                                       ((iAmDm && selectedMonster < 0 && !isBoss) || (!iAmDm && !targetsHero(selectedEffect)));
++                ImGui::PushID(1000 + static_cast<int>(i));
++                const bool clicked = drawCharacter({strOr(monster, "name") + (isBoss ? " (BOSS)" : ""), intOr(monster, "hp"),
++                                                    intOr(monster, "maxHp", 1), 0, 0, textureOr0(monsterTextures, strOr(monster, "name"))},
++                                                   scale, canTarget || (iAmDm && static_cast<int>(i) == selectedMonster));
++                ImGui::PopID();
++                if (clicked && canTarget) {
++                    if (iAmDm) {
++                        selectedMonster = static_cast<int>(i); // next click: the hero to attack
++                    } else {
++                        client.send({{"t", net::msg::PLAY}, {"card", selectedCard}, {"target", i}, {"targetType", "monster"}});
++                        clearSelection();
++                    }
++                    notice.clear();
+                 }
+             }
+             ImGui::EndChild();
+ 
+-            // Hand
++            // ---- My hand (the server only sends me my own cards)
+             ImGui::BeginChild("Hand", ImVec2(0, 0), true);
+-            int myMana = 0;
+-            for (const auto& hero : state["heroes"])
++            int myMana = iAmDm ? intOr(dm, "mana") : 0;
++            for (const auto& hero : heroes)
+                 if (strOr(hero, "id") == myId) myMana = intOr(hero, "mana");
+-            if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
++            if (hand.empty()) ImGui::TextDisabled(iAmDm && !myTurn ? "Your cards appear on your turn." : "No cards in hand.");
+             const float rowY = ImGui::GetCursorPosY() + 15.0f;
+-            const json hand = state.value("hand", json::array());
+             for (std::size_t i = 0; i < hand.size(); ++i) {
+-                CardView view{
+-                    strOr(hand[i], "name"),
+-                    intOr(hand[i], "cost"),
+-                    effectFromName(strOr(hand[i], "effect")),
+-                    intOr(hand[i], "value")
+-                };
++                const json& card = hand[i];
++                const std::string effect = strOr(card, "effect");
++                GLuint art = textureOr0(cardTextures, strOr(card, "name"));
++                CardView view{strOr(card, "name"), intOr(card, "cost"), effectFromName(effect), intOr(card, "value"),
++                              art ? art : emptyCardPicture,
++                              effect == "DM_ATTACK" ? "Monster deals " + std::to_string(intOr(card, "value")) : ""};
+                 if (i > 0) ImGui::SameLine();
+                 const bool isSelected = static_cast<int>(i) == selectedCard;
+                 ImGui::SetCursorPosY(rowY - (isSelected ? 15.0f : 0.0f));
+-                if (drawCard(view, myTurn && myMana >= view.manaCost, isSelected) && myTurn) {
+-                    selectedCard = isSelected ? -1 : static_cast<int>(i);
++                ImGui::PushID(static_cast<int>(i));
++                const bool clicked = drawCard(view, myTurn && !finished && myMana >= view.manaCost, isSelected);
++                ImGui::PopID();
++                if (clicked && myTurn) {
++                    const bool deselect = isSelected;
++                    clearSelection();
++                    if (!deselect) selectedCard = static_cast<int>(i);
+                     notice.clear();
+                 }
+             }
+             ImGui::EndChild();
+             ImGui::End();
++
++            // ---- Game over: Heroes_Win / Heroes_Lose
++            if (finished) {
++                const bool heroesWon = strOr(state, "winner") == "HEROES";
++                ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
++                ImGui::Begin("GameOver", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
++                                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
++                const GLuint picture = heroesWon ? heroesWinPicture : heroesLosePicture;
++                if (picture) ImGui::Image((ImTextureID)(intptr_t)picture, ImVec2(480, 300));
++                ImGui::SetWindowFontScale(1.6f);
++                const bool iWon = heroesWon != iAmDm;
++                ImGui::Text("%s win! %s", heroesWon ? "The heroes" : "The Dungeon Master", iWon ? "You won." : "You lost.");
++                ImGui::SetWindowFontScale(1.0f);
++                if (ImGui::Button("Back to menu", ImVec2(-1, 36))) backToMenu("");
++                ImGui::End();
++            }
+         }
+ 
+         ImGui::Render();
+@@ -462,4 +673,4 @@ int main() {
+     glfwDestroyWindow(window);
+     glfwTerminate();
+     return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/net/NetClient.cpp b/net/NetClient.cpp
+index d4e9205..034695a 100644
+--- a/net/NetClient.cpp
++++ b/net/NetClient.cpp
+@@ -93,3 +93,22 @@ bool NetClient::send(const nlohmann::json& message) {
+ std::vector<nlohmann::json> NetClient::takeMessages() {
+     return std::exchange(inbox, {});
+ }
++
++std::string NetClient::localNetworkAddress() const {
++    // "Connecting" a UDP socket sends nothing; it only makes the OS pick the network interface
++    // it would use to reach the internet, whose address we then read back.
++    ENetSocket socket = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
++    if (socket == ENET_SOCKET_NULL) return "";
++    std::string result;
++    ENetAddress remote{};
++    if (enet_address_set_host_ip(&remote, "8.8.8.8") == 0) {
++        remote.port = 53;
++        ENetAddress local{};
++        char text[64] = {};
++        if (enet_socket_connect(socket, &remote) == 0 && enet_socket_get_address(socket, &local) == 0 &&
++            enet_address_get_host_ip(&local, text, sizeof(text)) == 0)
++            result = text;
++    }
++    enet_socket_destroy(socket);
++    return result == "0.0.0.0" ? "" : result;
++}
+diff --git a/net/NetClient.h b/net/NetClient.h
+index 2d24669..a3ae6f2 100644
+--- a/net/NetClient.h
++++ b/net/NetClient.h
+@@ -39,6 +39,10 @@ public:
+     // Everything received since the last call, oldest first.
+     std::vector<nlohmann::json> takeMessages();
+ 
++    // This computer's address in its local network (e.g. "192.168.178.40"), or "" if unknown.
++    // Only reachable for players in the SAME network; see net/PROTOCOL.md for other networks.
++    std::string localNetworkAddress() const;
++
+     Status status() const { return currentStatus; }
+     const std::string& lastError() const { return error; }
+ 
+diff --git a/net/PROTOCOL.md b/net/PROTOCOL.md
+index bd1e37a..9a22960 100644
+--- a/net/PROTOCOL.md
++++ b/net/PROTOCOL.md
+@@ -25,8 +25,11 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
+ |----------|---------------------|---------------------------------------------|
+ | `create` | `name`              | make a room; you become host                |
+ | `join`   | `name`, `code`      | join a room that hasn't started yet         |
++| `role`   | `role`              | lobby: `"dm"` or a hero id (`"warrior"`, `"healer"`); only one DM per room |
+ | `start`  | -                   | host only                                   |
+-| `play`   | `card`, `target`    | index into your hand, index into `monsters` |
++| `play`   | `card`, `target`, `targetType` | hero: hand index, then `"monster"` + index into `monsters` or `"hero"` + index into `heroes` (Heal) |
++| `command`| `card`, `monster`, `hero` | DM: order monster #m to attack hero #h with DM card #c; happens on End turn |
++| `boss`   | `hero`              | DM: order the final boss to attack hero #h (once it has arrived) |
+ | `end`    | -                   | end your turn                               |
+ | `leave`  | -                   | leave the room (closing the connection also works) |
+ 
+@@ -35,25 +38,33 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
+ | t        | fields                                    | notes |
+ |----------|-------------------------------------------|-------|
+ | `joined` | `code`, `you`                             | you are in the room; `you` is your player id (`p1`, `p2`, ...) |
+-| `lobby`  | `code`, `host`, `players[{id,name}]`      | sent to the whole room whenever it changes |
++| `lobby`  | `code`, `host`, `players[{id,name,role}]` | sent to the whole room whenever it changes |
+ | `state`  | see below                                 | sent to each player after every change |
+ | `error`  | `msg`                                     | your request was rejected (wrong turn, not enough mana, ...) |
+ | `closed` | `msg`                                     | room closed |
+ 
+-`state`: `code, you, host, round, phase, active (player id or "dm"), winner (null | "HEROES" | "DUNGEON_MASTER"),
+-heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive}],
+-hand[{name, cost, effect, value}]` (only yours), `cardsPlayed`.
++`state`: `code, you, host, role ("hero" | "dm"), round, phase, active (player id), winner (null | "HEROES" | "DUNGEON_MASTER"),
++heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive, boss}],
++dm{id, name, human, connected, mana*, maxMana*}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
++`cardsPlayed`, `canBossAttack*`. Fields marked * are only sent to the DM.
+ 
+-## Rules in this prototype
++## Rules
+ 
+-- Everyone plays the hero `warrior`; decks come from `heroes.json` + `cards.json`.
+-- The Dungeon Master is a server bot that ends its turn immediately.
+-  To make it a human: give `Member` a `role` field, let one lobby member pick DM, add them as the
+-  `DungeonMaster` instead of the bot, and add a `queue` message that calls `Match::queueMonsterAttack`.
++- Players pick a role in the lobby. No role = the level's default hero (`defaultHeroes` in the level file).
++- Heroes come from `heroes.json`, the DM's mana and deck from the `dungeonMaster` block in the level file.
++- No human DM = the computer plays the DM: each living monster attacks the weakest hero, and the boss attacks too.
++- The final boss from the level file arrives in its `arrivalRound`; its health is `healthPerHero` x number of heroes.
+ - If the host leaves the lobby, the next player becomes host. If someone leaves during the match, their hero
+   stays and their turns are skipped. Rejoining is not supported yet.
+ - The room closes when its last player leaves.
+ 
++## Hosting: this computer vs. a server
++
++- **This computer**: the game runs a RoomServer inside itself. Only players on the same network can reach it,
++  unless the router forwards UDP 7777 to this computer.
++- **A server**: the game connects to a `dungeon_server` somewhere else (e.g. the team laptop). This is the way to
++  play across networks - that machine must be reachable (port forwarding or Tailscale).
++
+ ## Running it
+ 
+ Local test (one PC): start `dungeon_server`, then two `dungeon_online` windows with server `127.0.0.1`.
+diff --git a/net/Protocol.h b/net/Protocol.h
+index 44a123d..fba50f1 100644
+--- a/net/Protocol.h
++++ b/net/Protocol.h
+@@ -36,6 +36,8 @@ constexpr std::size_t MAX_NAME_LENGTH = 16;
+ 
+ // Room codes avoid characters people mix up when reading them out: 0/O, 1/I/L.
+ // 31^6 = ~887 million possible codes.
++inline constexpr const char* DM_ROLE = "dm";
++
+ inline constexpr char ROOM_CODE_ALPHABET[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+ 
+ inline std::string generateRoomCode(std::mt19937& rng) {
+@@ -75,7 +77,10 @@ namespace msg {
+     inline constexpr const char* CREATE = "create"; // { name }                     host makes a new room
+     inline constexpr const char* JOIN   = "join";   // { name, code }               join an existing room
+     inline constexpr const char* START  = "start";  // {}                           host only, starts the match
+-    inline constexpr const char* PLAY   = "play";   // { card, target }             hand index, monster index
++    inline constexpr const char* ROLE   = "role";   // { role }                     lobby: "dm" or a hero id ("warrior", "healer")
++    inline constexpr const char* PLAY   = "play";   // { card, target, targetType } hero: hand index + "monster"/"hero" index
++    inline constexpr const char* COMMAND= "command";// { card, monster, hero }      DM: order a monster to attack a hero
++    inline constexpr const char* BOSS   = "boss";   // { hero }                     DM: order the final boss to attack a hero
+     inline constexpr const char* END    = "end";    // {}                           end your turn
+     inline constexpr const char* LEAVE  = "leave";  // {}
+ 
+diff --git a/server/RoomServer.cpp b/server/RoomServer.cpp
+index a7b2f52..5faed48 100644
+--- a/server/RoomServer.cpp
++++ b/server/RoomServer.cpp
+@@ -5,6 +5,7 @@
+ #include <stdexcept>
+ 
+ #include "../net/Protocol.h"
++#include "DMCard.h"
+ #include "HeroCard.h"
+ 
+ using nlohmann::json;
+@@ -27,6 +28,8 @@ const char* effectName(HeroEffect effect) {
+         case HeroEffect::HEAL: return "HEAL";
+         case HeroEffect::BUFF: return "BUFF";
+         case HeroEffect::SPELL: return "SPELL";
++        case HeroEffect::SHIELD: return "SHIELD";
++        case HeroEffect::FIREBALL: return "FIREBALL";
+     }
+     return "ATTACK";
+ }
+@@ -114,7 +117,10 @@ void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
+     Member* member = room ? memberOf(*room, peer) : nullptr;
+     if (!room || !member) return sendError(peer, "You are not in a room");
+ 
++    if (type == net::msg::ROLE) return handleRole(peer, *room, *member, message);
+     if (type == net::msg::START) return handleStart(peer, *room, *member);
++    if (type == net::msg::COMMAND) return handleCommand(peer, *room, *member, message);
++    if (type == net::msg::BOSS) return handleBoss(peer, *room, *member, message);
+     if (type == net::msg::PLAY) return handlePlay(peer, *room, *member, message);
+     if (type == net::msg::END) return handleEnd(peer, *room, *member);
+     sendError(peer, "Unknown message type");
+@@ -127,7 +133,7 @@ void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
+ 
+     Room room;
+     room.code = newRoomCode();
+-    Member host{peer, "p" + std::to_string(room.nextMemberNumber++), net::sanitizeName(readString(message, "name")), "warrior"};
++    Member host{peer, "p" + std::to_string(room.nextMemberNumber++), net::sanitizeName(readString(message, "name")), ""};
+     room.hostId = host.id;
+     room.members.push_back(host);
+ 
+@@ -161,7 +167,7 @@ void RoomServer::handleJoin(ENetPeer* peer, const json& message) {
+     if (room.match) return sendError(peer, "That match has already started");
+     if (room.members.size() >= net::MAX_PLAYERS_PER_ROOM) return sendError(peer, "That room is full");
+ 
+-    Member member{peer, "p" + std::to_string(room.nextMemberNumber++), net::sanitizeName(readString(message, "name")), "warrior"};
++    Member member{peer, "p" + std::to_string(room.nextMemberNumber++), net::sanitizeName(readString(message, "name")), ""};
+     room.members.push_back(member);
+     peers[peer].roomCode = room.code;
+     peers[peer].memberId = member.id;
+@@ -216,6 +222,23 @@ void RoomServer::leaveRoom(ENetPeer* peer) {
+     }
+ }
+ 
++void RoomServer::handleRole(ENetPeer* peer, Room& room, Member& member, const json& message) {
++    if (room.match) return sendError(peer, "The match has already started");
++    const std::string role = readString(message, "role");
++
++    if (role == net::DM_ROLE) {
++        for (const auto& other : room.members)
++            if (other.id != member.id && other.role == net::DM_ROLE)
++                return sendError(peer, other.name + " is already the Dungeon Master");
++    } else {
++        bool knownHero = false;
++        for (const auto& hero : gameData.getHeroes()) knownHero = knownHero || hero.id == role;
++        if (!knownHero) return sendError(peer, "Unknown role");
++    }
++    member.role = role;
++    broadcastLobby(room);
++}
++
+ // ===================== Match =====================
+ 
+ void RoomServer::handleStart(ENetPeer* peer, Room& room, Member& member) {
+@@ -223,6 +246,10 @@ void RoomServer::handleStart(ENetPeer* peer, Room& room, Member& member) {
+     if (room.match) return sendError(peer, "The match has already started");
+ 
+     try {
++        // Players who never picked a role play the level's default hero.
++        const std::string defaultHero = gameData.loadLevel(1).defaultHeroes.front();
++        for (auto& m : room.members)
++            if (m.role.empty()) m.role = defaultHero;
+         room.match = buildMatch(room);
+     } catch (const std::exception& e) {
+         return sendError(peer, std::string("Could not start the match: ") + e.what());
+@@ -236,31 +263,57 @@ std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
+     const LevelDefinition level = gameData.loadLevel(1);
+     auto match = std::make_unique<Match>(room.code, level.maxRounds);
+ 
+-    // One hero per member. The Hero's playerId is the member id, which is how we
+-    // find out whose turn it is.
++    // Heroes: everyone who didn't pick DM. No role chosen = the level's default hero.
++    int heroCount = 0;
++    const Member* dmMember = nullptr;
+     for (const auto& member : room.members) {
+-        const HeroDefinition& heroDef = gameData.getHero(member.heroId);
++        if (member.role == net::DM_ROLE) { dmMember = &member; continue; }
++        const std::string heroId = member.role.empty() ? level.defaultHeroes.front() : member.role;
++        const HeroDefinition& heroDef = gameData.getHero(heroId);
++
++        // The Hero's playerId is the member id - that's how the server knows whose turn it is.
+         auto hero = std::make_unique<Hero>(member.id, member.name, heroDef.toHeroType(), heroDef.maxMana);
+         for (const auto& entry : heroDef.startingDeck) {
+             const CardDefinition& card = gameData.getCard(entry.cardId);
+             if (!card.heroEffect) continue;
+-            for (int i = 0; i < entry.count; ++i)
+-                hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value));
++            for (int i = 0; i < entry.count; ++i) {
++                if (*card.heroEffect == HeroEffect::SPELL)
++                    hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value,
++                                                               card.target, card.freezeRounds));
++                else
++                    hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value));
++            }
+         }
+         match->addPlayer(std::move(hero));
++        ++heroCount;
+     }
++    if (heroCount == 0) throw std::invalid_argument("Someone has to play a hero");
++
++    // Dungeon Master: the player who picked DM, otherwise the computer.
++    auto dm = dmMember ? std::make_unique<DungeonMaster>(dmMember->id, dmMember->name, level.dmMaxMana, false)
++                       : std::make_unique<DungeonMaster>("dm", "Dungeon Master", level.dmMaxMana, true);
++    for (const auto& entry : level.dmDeck) {
++        const CardDefinition& card = gameData.getCard(entry.cardId);
++        if (!card.dmEffect) continue;
++        for (int i = 0; i < entry.count; ++i)
++            dm->addToDeck(std::make_unique<DMCard>(card.name, card.manaCost, *card.dmEffect, card.value));
++    }
++    match->addPlayer(std::move(dm));
+ 
+-    // Sprint 2 prototype: the server plays the Dungeon Master as a bot that just ends its turn.
+-    // A human DM is one more Member with a "role" field - see the notes in net/PROTOCOL.md.
+-    match->addPlayer(std::make_unique<DungeonMaster>("dm", "Dungeon Master", 10, true));
+-
+-    const int heroCount = static_cast<int>(room.members.size());
+     for (const auto& entry : level.monsters) {
+         const MonsterDefinition& monsterDef = gameData.getMonster(entry.monsterId);
+         for (int i = 0; i < entry.countPerHero * heroCount; ++i)
+             match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
+     }
+ 
++    // Final boss from the level file: arrives in a later round, health scales with the number of heroes.
++    if (!level.bossId.empty()) {
++        const MonsterDefinition& bossDef = gameData.getMonster(level.bossId);
++        const int bossHealth = bossDef.healthPerHero > 0 ? bossDef.healthPerHero * heroCount : bossDef.maxHealth;
++        match->configureBoss(std::make_unique<Monster>(bossDef.name, bossHealth, true),
++                             level.bossArrivalRound, bossDef.attackPower);
++    }
++
+     match->start();
+     return match;
+ }
+@@ -277,6 +330,8 @@ void RoomServer::skipBotAndAbsentTurns(Room& room) {
+                 if (m.id == active->getPlayerId() && m.peer) humanCanPlay = true;
+         }
+         if (humanCanPlay) return;
++        if (auto* dm = dynamic_cast<DungeonMaster*>(active); dm && active->isBot())
++            playBotDungeonMaster(*room.match, *dm);
+         room.match->endTurn(*active);
+     }
+ }
+@@ -290,11 +345,21 @@ void RoomServer::handlePlay(ENetPeer* peer, Room& room, Member& member, const js
+     if (!readIndex(message, "card", cardIndex) || !readIndex(message, "target", targetIndex))
+         return sendError(peer, "play needs 'card' and 'target' numbers");
+     if (cardIndex >= active->getHandSize()) return sendError(peer, "No card at that position");
+-    const auto& monsters = room.match->getMonsters();
+-    if (targetIndex >= monsters.size()) return sendError(peer, "No monster at that position");
++
++    // "targetType": "hero" for heals/shields, anything else = a monster
++    Targetable* target = nullptr;
++    if (readString(message, "targetType") == "hero") {
++        const auto& heroes = room.match->getHeroes();
++        if (targetIndex >= heroes.size()) return sendError(peer, "No hero at that position");
++        target = heroes[targetIndex];
++    } else {
++        const auto& monsters = room.match->getMonsters();
++        if (targetIndex >= monsters.size()) return sendError(peer, "No monster at that position");
++        target = monsters[targetIndex].get();
++    }
+ 
+     try {
+-        room.match->apply(active->getHandCard(cardIndex), *monsters[targetIndex]); // Match validates the rest
++        room.match->apply(active->getHandCard(cardIndex), *target); // Match validates the rest
+     } catch (const std::exception& e) {
+         return sendError(peer, e.what());
+     }
+@@ -311,6 +376,84 @@ void RoomServer::handleEnd(ENetPeer* peer, Room& room, Member& member) {
+     broadcastState(room);
+ }
+ 
++// ---- Dungeon Master
++
++DungeonMaster* RoomServer::activeDungeonMaster(Room& room, const Member& member) {
++    if (!room.match) return nullptr;
++    Player* active = room.match->getActivePlayer();
++    if (!active || active->getPlayerId() != member.id) return nullptr;
++    return dynamic_cast<DungeonMaster*>(active);
++}
++
++// DM orders: "monster #m attacks hero #h, using DM card #c". The attacks happen when the DM ends the turn.
++void RoomServer::handleCommand(ENetPeer* peer, Room& room, Member& member, const json& message) {
++    DungeonMaster* dm = activeDungeonMaster(room, member);
++    if (!dm) return sendError(peer, "Only the Dungeon Master can do that, on their turn");
++
++    std::size_t cardIndex = 0, monsterIndex = 0, heroIndex = 0;
++    if (!readIndex(message, "card", cardIndex) || !readIndex(message, "monster", monsterIndex) ||
++        !readIndex(message, "hero", heroIndex))
++        return sendError(peer, "command needs 'card', 'monster' and 'hero' numbers");
++    const auto& monsters = room.match->getMonsters();
++    const auto& heroes = room.match->getHeroes();
++    if (cardIndex >= dm->getHandSize()) return sendError(peer, "No card at that position");
++    if (monsterIndex >= monsters.size()) return sendError(peer, "No monster at that position");
++    if (heroIndex >= heroes.size()) return sendError(peer, "No hero at that position");
++
++    try {
++        room.match->queueMonsterAttack(*dm, *monsters[monsterIndex], dm->getHandCard(cardIndex), *heroes[heroIndex]);
++    } catch (const std::exception& e) {
++        return sendError(peer, e.what());
++    }
++    broadcastState(room);
++}
++
++void RoomServer::handleBoss(ENetPeer* peer, Room& room, Member& member, const json& message) {
++    DungeonMaster* dm = activeDungeonMaster(room, member);
++    if (!dm) return sendError(peer, "Only the Dungeon Master can do that, on their turn");
++    std::size_t heroIndex = 0;
++    if (!readIndex(message, "hero", heroIndex)) return sendError(peer, "boss needs a 'hero' number");
++    const auto& heroes = room.match->getHeroes();
++    if (heroIndex >= heroes.size()) return sendError(peer, "No hero at that position");
++
++    try {
++        room.match->queueBossAttack(*dm, *heroes[heroIndex]);
++    } catch (const std::exception& e) {
++        return sendError(peer, e.what());
++    }
++    broadcastState(room);
++}
++
++// The computer DM: every living monster attacks the weakest hero while there are cards and mana,
++// and the boss attacks too once it has arrived.
++void RoomServer::playBotDungeonMaster(Match& match, DungeonMaster& dm) {
++    auto weakestHero = [&]() -> Hero* {
++        Hero* weakest = nullptr;
++        for (Hero* hero : match.getHeroes())
++            if (hero->isAlive() && (!weakest || hero->getHealth() < weakest->getHealth())) weakest = hero;
++        return weakest;
++    };
++
++    for (const auto& monster : match.getMonsters()) {
++        if (!monster->isAlive() || monster->isBoss()) continue;
++        Hero* target = weakestHero();
++        if (!target) return;
++        bool ordered = false;
++        for (std::size_t i = 0; i < dm.getHandSize() && !ordered; ++i) {
++            try {
++                match.queueMonsterAttack(dm, *monster, dm.getHandCard(i), *target);
++                ordered = true;
++            } catch (const std::exception&) {
++                // not an attack card, not enough mana or card limit reached: try the next card
++            }
++        }
++        if (!ordered) break;
++    }
++    if (match.canQueueBossAttack()) {
++        if (Hero* target = weakestHero()) match.queueBossAttack(dm, *target);
++    }
++}
++
+ // ===================== Sending =====================
+ 
+ void RoomServer::send(ENetPeer* peer, const json& message) {
+@@ -326,7 +469,7 @@ void RoomServer::sendError(ENetPeer* peer, const std::string& text) {
+ 
+ void RoomServer::broadcastLobby(const Room& room) {
+     json players = json::array();
+-    for (const auto& m : room.members) players.push_back({{"id", m.id}, {"name", m.name}});
++    for (const auto& m : room.members) players.push_back({{"id", m.id}, {"name", m.name}, {"role", m.role}});
+     const json message = {{"t", net::msg::LOBBY}, {"code", room.code}, {"host", room.hostId}, {"players", players}};
+     for (const auto& m : room.members) send(m.peer, message); // only this room's members
+ }
+@@ -339,6 +482,7 @@ void RoomServer::broadcastState(const Room& room) {
+ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
+     const Match& match = *room.match;
+     json state = {{"t", net::msg::STATE}, {"code", room.code}, {"you", viewer.id}, {"host", room.hostId},
++                  {"role", viewer.role == net::DM_ROLE ? "dm" : "hero"},
+                   {"round", match.getRound()}, {"phase", phaseName(match.getPhase())}};
+ 
+     const Player* active = match.getActivePlayer();
+@@ -348,12 +492,25 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
+     else
+         state["winner"] = nullptr;
+ 
++    auto cardsOf = [](const Player& player) {
++        json hand = json::array();
++        for (std::size_t i = 0; i < player.getHandSize(); ++i) {
++            const Card& card = player.getHandCard(i);
++            const auto* heroCard = dynamic_cast<const HeroCard*>(&card);
++            const auto* dmCard = dynamic_cast<const DMCard*>(&card);
++            hand.push_back({{"name", card.getName()}, {"cost", card.getManaCost()},
++                            {"effect", heroCard ? effectName(heroCard->getEffect()) : "DM_ATTACK"},
++                            {"value", heroCard ? heroCard->getValue() : dmCard ? dmCard->getValue() : 0}});
++        }
++        return hand;
++    };
++
+     json heroes = json::array();
+     for (const Hero* hero : match.getHeroes()) {
+         bool connected = false;
+         std::string heroId;
+         for (const auto& m : room.members)
+-            if (m.id == hero->getPlayerId()) { connected = m.peer != nullptr; heroId = m.heroId; }
++            if (m.id == hero->getPlayerId()) { connected = m.peer != nullptr; heroId = m.role; }
+         heroes.push_back({{"id", hero->getPlayerId()}, {"name", hero->getName()}, {"heroId", heroId},
+                           {"hp", hero->getHealth()}, {"maxHp", hero->getType().maxHealth},
+                           {"mana", hero->getMana()}, {"maxMana", hero->getMaxMana()},
+@@ -361,24 +518,34 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
+ 
+         // Hidden information: only the viewer's own cards are sent to them.
+         if (hero->getPlayerId() == viewer.id) {
+-            json hand = json::array();
+-            for (std::size_t i = 0; i < hero->getHandSize(); ++i) {
+-                const Card& card = hero->getHandCard(i);
+-                const auto* heroCard = dynamic_cast<const HeroCard*>(&card);
+-                hand.push_back({{"name", card.getName()}, {"cost", card.getManaCost()},
+-                                {"effect", heroCard ? effectName(heroCard->getEffect()) : "ATTACK"},
+-                                {"value", heroCard ? heroCard->getValue() : 0}});
+-            }
+-            state["hand"] = hand;
++            state["hand"] = cardsOf(*hero);
+             state["cardsPlayed"] = hero->getCardsPlayedThisTurn();
+         }
+     }
+     state["heroes"] = heroes;
+ 
++    // The Dungeon Master (human or computer)
++    for (const auto& member : room.members) {
++        if (member.role != net::DM_ROLE) continue;
++        state["dm"] = {{"id", member.id}, {"name", member.name}, {"human", true}, {"connected", member.peer != nullptr}};
++    }
++    if (!state.contains("dm")) state["dm"] = {{"id", "dm"}, {"name", "Computer DM"}, {"human", false}, {"connected", true}};
++    if (viewer.role == net::DM_ROLE) {
++        if (const auto* dm = dynamic_cast<const DungeonMaster*>(active)) {
++            state["hand"] = cardsOf(*dm);
++            state["dm"]["mana"] = dm->getMana();
++            state["dm"]["maxMana"] = dm->getMaxMana();
++            state["canBossAttack"] = match.canQueueBossAttack();
++        } else {
++            state["hand"] = json::array(); // the DM's hand is only shown on the DM's turn
++        }
++    }
++
+     json monsters = json::array();
+     for (const auto& monster : match.getMonsters())
+         monsters.push_back({{"name", monster->getName()}, {"hp", monster->getHealth()},
+-                            {"maxHp", monster->getMaxHealth()}, {"alive", monster->isAlive()}});
++                            {"maxHp", monster->getMaxHealth()}, {"alive", monster->isAlive()},
++                            {"boss", monster->isBoss()}});
+     state["monsters"] = monsters;
+     return state;
+ }
+diff --git a/server/RoomServer.h b/server/RoomServer.h
+index 492e889..7e077f6 100644
+--- a/server/RoomServer.h
++++ b/server/RoomServer.h
+@@ -44,7 +44,7 @@ private:
+         ENetPeer* peer = nullptr; // nullptr = disconnected during the match (their turns are skipped)
+         std::string id;           // "p1", "p2", ... unique inside the room; also the Hero's playerId
+         std::string name;
+-        std::string heroId;       // which hero from heroes.json this member plays
++        std::string role;         // "" = not chosen yet, "dm", or a hero id from heroes.json ("warrior", "healer")
+     };
+ 
+     struct Room {
+@@ -76,9 +76,12 @@ private:
+     // Requests
+     void handleCreate(ENetPeer* peer, const nlohmann::json& message);
+     void handleJoin(ENetPeer* peer, const nlohmann::json& message);
++    void handleRole(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
+     void handleStart(ENetPeer* peer, Room& room, Member& member);
+     void handlePlay(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
+     void handleEnd(ENetPeer* peer, Room& room, Member& member);
++    void handleCommand(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
++    void handleBoss(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
+ 
+     // Helpers
+     void leaveRoom(ENetPeer* peer);
+@@ -87,6 +90,8 @@ private:
+     std::string newRoomCode();
+     std::unique_ptr<Match> buildMatch(const Room& room);
+     void skipBotAndAbsentTurns(Room& room);
++    void playBotDungeonMaster(Match& match, DungeonMaster& dm); // queues attacks for the computer DM
++    DungeonMaster* activeDungeonMaster(Room& room, const Member& member);
+ 
+     void send(ENetPeer* peer, const nlohmann::json& message);
+     void sendError(ENetPeer* peer, const std::string& text);
+diff --git a/src/GameData.cpp b/src/GameData.cpp
+index 4357b01..53deb43 100644
+--- a/src/GameData.cpp
++++ b/src/GameData.cpp
+@@ -284,6 +284,7 @@ void GameData::loadCards() {
+         card.manaCost = readNumber(entry, "manaCost", 0, where);
+         card.value = readNumber(entry, "value", 0, where);
+         card.description = readText(entry, "description", where);
++        if (entry.contains("image")) card.image = readImagePath(entry, where); // optional
+         card.temporary = readTrueFalse(entry, "temporary", where);
+ 
+         cards.push_back(card);
+@@ -445,6 +446,30 @@ LevelDefinition GameData::loadLevel(int number) const {
+         }
+     }
+ 
++    // dungeonMaster: { "maxMana": <number>, "startingDeck": [ { "card": "<id>", "count": <number> } ] }
++    if (root.contains("dungeonMaster")) {
++        const std::string where = fileName + ", dungeonMaster";
++        const json& dm = root.at("dungeonMaster");
++        requireObject(dm, where);
++        level.dmMaxMana = readNumber(dm, "maxMana", 0, where);
++        const json deck = readList(dm, "startingDeck", where, true);
++        for (std::size_t i = 0; i < deck.size(); ++i) {
++            const std::string deckWhere = where + ", startingDeck #" + std::to_string(i + 1);
++            requireObject(deck[i], deckWhere);
++            DeckEntry line;
++            line.cardId = readText(deck[i], "card", deckWhere);
++            line.count = readNumber(deck[i], "count", 1, deckWhere);
++            const CardDefinition* card = findCard(line.cardId);
++            if (card == nullptr) {
++                fail(deckWhere, "unknown card \"" + line.cardId + "\" (not found in cards.json)");
++            }
++            if (card->side != Side::DUNGEON_MASTER) {
++                fail(deckWhere, "card \"" + line.cardId + "\" is a HEROES card and cannot be in the DM deck");
++            }
++            level.dmDeck.push_back(line);
++        }
++    }
++
+     level.temporary = readTrueFalse(root, "temporary", fileName);
+     return level;
+ }
+diff --git a/src/Renderer.cpp b/src/Renderer.cpp
+index e89efa7..9fa17a1 100644
+--- a/src/Renderer.cpp
++++ b/src/Renderer.cpp
+@@ -41,36 +41,40 @@ bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_wid
+     return true;
+ }
+ 
+-bool drawCharacter(const Character& c)
++bool drawCharacter(const Character& c, float scale, bool highlighted)
+ {
+-    ImGui::BeginChild(c.name.c_str(), ImVec2(240, 360), false);
++    const float width = 240.0f * scale, barWidth = 220.0f * scale;
++    // "character" is the ID inside the caller's PushID scope, so two "Goblin"s don't merge into one widget.
++    if (highlighted) ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 220, 90, 255));
++    ImGui::BeginChild("character", ImVec2(width, 100.0f + 260.0f * scale), highlighted, ImGuiWindowFlags_NoScrollbar);
+ 
+-    ImGui::Text("%s", c.name.c_str());
++    ImGui::TextUnformatted(c.name.c_str());
+ 
+     char text[32];
+     snprintf(text, sizeof(text), "%d / %d", c.health, c.maxHealth);
+-    ImGui::ProgressBar((float)c.health / c.maxHealth, ImVec2(220, 0), text);
++    ImGui::ProgressBar(c.maxHealth > 0 ? (float)c.health / c.maxHealth : 0.0f, ImVec2(barWidth, 0), text);
+ 
+     if (c.maxMana > 0) {
+         char manaText[32];
+         snprintf(manaText, sizeof(manaText), "%d / %d", c.mana, c.maxMana);
+-        ImGui::ProgressBar((float)c.mana / c.maxMana, ImVec2(220, 0), manaText);
++        ImGui::ProgressBar((float)c.mana / c.maxMana, ImVec2(barWidth, 0), manaText);
+     }
+ 
+     ImGui::Spacing();
+ 
+     if (c.textureID != 0)
+     {
+-        ImGui::Image((ImTextureID)(intptr_t)c.textureID, ImVec2(220, 260));
++        ImGui::Image((ImTextureID)(intptr_t)c.textureID, ImVec2(barWidth, 260 * scale));
+     }
+     else
+     {
+         ImVec2 p = ImGui::GetCursorScreenPos();
+-        ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + 220, p.y + 260), IM_COL32(90, 90, 90, 255));
+-        ImGui::Dummy(ImVec2(220, 260));
++        ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + barWidth, p.y + 260 * scale), IM_COL32(90, 90, 90, 255));
++        ImGui::Dummy(ImVec2(barWidth, 260 * scale));
+     }
+ 
+     ImGui::EndChild();
++    if (highlighted) ImGui::PopStyleColor();
+     return ImGui::IsItemClicked();
+ }
+ 
+@@ -81,16 +85,28 @@ bool drawCard (const CardView& c, bool playable, bool selected)
+     if (selected)
+         ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 220, 90, 255));
+ 
+-    ImGui::BeginChild(c.name.c_str(), ImVec2(130, 110), true);
++    // "card" is the ID inside the caller's PushID scope, so two cards with the same name stay separate.
++    const float height = c.textureID ? 175.0f : 110.0f;
++    ImGui::BeginChild("card", ImVec2(130, height), true, ImGuiWindowFlags_NoScrollbar);
+ 
+-    ImGui::Text("%s", c.name.c_str());
++    if (c.textureID)
++        ImGui::Image((ImTextureID)(intptr_t)c.textureID, ImVec2(112, 70));
++
++    ImGui::TextWrapped("%s", c.name.c_str());
+     ImGui::Text("Cost: %d", c.manaCost);
+ 
+-    switch (c.effect)
+-    {
+-        case HeroEffect::ATTACK: ImGui::Text("Deal %d damage", c.value); break;
+-        case HeroEffect::HEAL:   ImGui::Text("+%d HP", c.value);        break;
+-        default:                 ImGui::Text("Effect %d", c.value);      break;
++    if (!c.effectText.empty()) {
++        ImGui::TextWrapped("%s", c.effectText.c_str());
++    } else {
++        switch (c.effect)
++        {
++            case HeroEffect::ATTACK:   ImGui::Text("Deal %d damage", c.value);    break;
++            case HeroEffect::SPELL:    ImGui::Text("Spell: %d damage", c.value);  break;
++            case HeroEffect::FIREBALL: ImGui::Text("Fireball: %d", c.value);      break;
++            case HeroEffect::HEAL:     ImGui::Text("+%d HP", c.value);            break;
++            case HeroEffect::SHIELD:   ImGui::Text("Shield %d", c.value);         break;
++            default:                   ImGui::Text("Effect %d", c.value);         break;
++        }
+     }
+ 
+     ImGui::EndChild();
+diff --git a/tests/net_tests.cpp b/tests/net_tests.cpp
+index c4d0f3f..ff33855 100644
+--- a/tests/net_tests.cpp
++++ b/tests/net_tests.cpp
+@@ -171,6 +171,104 @@ int main() {
+         pump(server, withGuesser, [&] { return server.roomCount() == 1; }, 12000);
+         check(true, "room closes when its last player leaves");
+ 
++        // ===== Roles: a human Dungeon Master =====
++        TestClient heroPlayer, dmPlayer, lateDm;
++        std::vector<TestClient*> roles{&heroPlayer, &dmPlayer, &lateDm};
++        for (auto* c : roles) c->net.connect("127.0.0.1", TEST_PORT);
++        pump(server, roles, [&] {
++            for (auto* c : roles) if (c->net.status() != NetClient::Status::Connected) return false;
++            return true;
++        });
++        heroPlayer.net.send({{"t", net::msg::CREATE}, {"name", "Healer"}});
++        pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::JOINED).is_null(); });
++        const std::string roleCode = heroPlayer.lastOfType(net::msg::JOINED)["code"];
++        dmPlayer.net.send({{"t", net::msg::JOIN}, {"name", "Boss"}, {"code", roleCode}});
++        lateDm.net.send({{"t", net::msg::JOIN}, {"name", "Late"}, {"code", roleCode}});
++        pump(server, roles, [&] { return !dmPlayer.lastOfType(net::msg::JOINED).is_null() && !lateDm.lastOfType(net::msg::JOINED).is_null(); });
++
++        heroPlayer.net.send({{"t", net::msg::ROLE}, {"role", "wizard_that_does_not_exist"}});
++        pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::ERROR).is_null(); });
++        check(true, "unknown role is rejected");
++
++        heroPlayer.net.send({{"t", net::msg::ROLE}, {"role", "healer"}});
++        dmPlayer.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
++        pump(server, roles, [&] {
++            auto lobby = heroPlayer.lastOfType(net::msg::LOBBY);
++            int set = 0;
++            if (!lobby.is_null()) for (const auto& pl : lobby["players"]) if (pl["role"] != "") ++set;
++            return set == 2;
++        });
++        lateDm.received.clear();
++        lateDm.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
++        pump(server, roles, [&] { return !lateDm.lastOfType(net::msg::ERROR).is_null(); });
++        check(lateDm.lastOfType(net::msg::ERROR)["msg"] == "Boss is already the Dungeon Master", "only one player can be DM");
++        lateDm.net.send({{"t", net::msg::ROLE}, {"role", "warrior"}});
++        pump(server, roles, [&] {
++            auto lobby = lateDm.lastOfType(net::msg::LOBBY);
++            return !lobby.is_null() && lobby["players"][2]["role"] == "warrior";
++        });
++
++        heroPlayer.net.send({{"t", net::msg::START}});
++        pump(server, roles, [&] { return !dmPlayer.lastOfType(net::msg::STATE).is_null() && !lateDm.lastOfType(net::msg::STATE).is_null(); });
++        json dmView = dmPlayer.lastOfType(net::msg::STATE);
++        check(dmView["role"] == "dm" && dmView["dm"]["human"] == true, "DM player is the Dungeon Master, not a hero");
++        check(dmView["heroes"].size() == 2, "only the two hero players are heroes");
++        check(dmView["heroes"][0]["heroId"] == "healer", "healer role gives the healer hero");
++
++        // Heroes take their turns
++        for (auto* hero : {&heroPlayer, &lateDm}) {
++            hero->received.clear();
++            hero->net.send({{"t", net::msg::END}});
++            pump(server, roles, [&] { return !hero->lastOfType(net::msg::STATE).is_null(); });
++        }
++        pump(server, roles, [&] { return dmPlayer.lastOfType(net::msg::STATE)["active"] == dmPlayer.lastOfType(net::msg::STATE)["you"]; });
++        dmView = dmPlayer.lastOfType(net::msg::STATE);
++        check(dmView["hand"].size() >= 1 && dmView["hand"][0]["effect"] == "DM_ATTACK", "DM sees their attack cards on their turn");
++
++        // A hero cannot give monster orders
++        heroPlayer.received.clear();
++        heroPlayer.net.send({{"t", net::msg::COMMAND}, {"card", 0}, {"monster", 0}, {"hero", 0}});
++        pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::ERROR).is_null(); });
++        check(true, "heroes cannot command monsters");
++
++        // DM orders monster 0 to attack hero 0, then ends the turn: the hero takes damage
++        const int healerHpBefore = dmView["heroes"][0]["hp"];
++        dmPlayer.received.clear();
++        dmPlayer.net.send({{"t", net::msg::COMMAND}, {"card", 0}, {"monster", 0}, {"hero", 0}});
++        pump(server, roles, [&] { return !dmPlayer.lastOfType(net::msg::STATE).is_null() || !dmPlayer.lastOfType(net::msg::ERROR).is_null(); });
++        check(dmPlayer.lastOfType(net::msg::ERROR).is_null(), "DM's monster order is accepted");
++        dmPlayer.received.clear();
++        dmPlayer.net.send({{"t", net::msg::END}});
++        pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::STATE).is_null() &&
++                                          heroPlayer.lastOfType(net::msg::STATE)["round"] == 2; });
++        check(heroPlayer.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < healerHpBefore, "the monster attacked the hero the DM chose");
++
++        // ===== Computer DM attacks too =====
++        TestClient solo;
++        std::vector<TestClient*> soloList{&solo};
++        solo.net.connect("127.0.0.1", TEST_PORT);
++        pump(server, soloList, [&] { return solo.net.status() == NetClient::Status::Connected; });
++        solo.net.send({{"t", net::msg::CREATE}, {"name", "Solo"}});
++        pump(server, soloList, [&] { return !solo.lastOfType(net::msg::JOINED).is_null(); });
++        solo.net.send({{"t", net::msg::START}});
++        pump(server, soloList, [&] { return !solo.lastOfType(net::msg::STATE).is_null(); });
++        const int soloHp = solo.lastOfType(net::msg::STATE)["heroes"][0]["hp"];
++        solo.received.clear();
++        solo.net.send({{"t", net::msg::END}});
++        pump(server, soloList, [&] { auto st = solo.lastOfType(net::msg::STATE); return !st.is_null() && st["round"] == 2; });
++        check(solo.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < soloHp, "computer DM's monsters attack back");
++
++        // Play until the boss arrives (level_1: round 4)
++        for (int r = 0; r < 2; ++r) {
++            solo.received.clear();
++            solo.net.send({{"t", net::msg::END}});
++            pump(server, soloList, [&] { return !solo.lastOfType(net::msg::STATE).is_null(); });
++        }
++        const json round4 = solo.lastOfType(net::msg::STATE); // keep it alive while looping over it
++        bool bossSeen = false;
++        for (const auto& m : round4["monsters"]) bossSeen = bossSeen || m["boss"] == true;
++        check(bossSeen, "final boss arrives in round 4");
++
+         std::cout << "All network tests passed.\n";
+         return 0;
+     } catch (const std::exception& e) {
+-- 
+2.43.0
+

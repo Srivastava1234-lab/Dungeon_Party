@@ -36,6 +36,8 @@ constexpr std::size_t MAX_NAME_LENGTH = 16;
 
 // Room codes avoid characters people mix up when reading them out: 0/O, 1/I/L.
 // 31^6 = ~887 million possible codes.
+inline constexpr const char* DM_ROLE = "dm";
+
 inline constexpr char ROOM_CODE_ALPHABET[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 inline std::string generateRoomCode(std::mt19937& rng) {
@@ -75,7 +77,10 @@ namespace msg {
     inline constexpr const char* CREATE = "create"; // { name }                     host makes a new room
     inline constexpr const char* JOIN   = "join";   // { name, code }               join an existing room
     inline constexpr const char* START  = "start";  // {}                           host only, starts the match
-    inline constexpr const char* PLAY   = "play";   // { card, target }             hand index, monster index
+    inline constexpr const char* ROLE   = "role";   // { role }                     lobby: "dm" or a hero id ("warrior", "healer")
+    inline constexpr const char* PLAY   = "play";   // { card, target, targetType } hero: hand index + "monster"/"hero" index
+    inline constexpr const char* COMMAND= "command";// { card, monster, hero }      DM: order a monster to attack a hero
+    inline constexpr const char* BOSS   = "boss";   // { hero }                     DM: order the final boss to attack a hero
     inline constexpr const char* END    = "end";    // {}                           end your turn
     inline constexpr const char* LEAVE  = "leave";  // {}
 
