@@ -47,6 +47,37 @@
       "freezeRounds": 0,
       "description": "Deal damage to the boss.",
       "temporary": true
+    },
+    {
+      "id": "goblin_slash",
+      "name": "Goblin Slash",
+      "side": "DUNGEON_MASTER",
+      "effect": "ATTACK",
+      "manaCost": 3,
+      "value": 15,
+      "description": "Order a monster to hit one hero. The hit lands after the DM turn.",
+      "temporary": true,
+      "_note": "DM card for SCRUM-40 testing. Played with the queue message, not with play."
+    },
+    {
+      "id": "heavy_smash",
+      "name": "Heavy Smash",
+      "side": "DUNGEON_MASTER",
+      "effect": "ATTACK",
+      "manaCost": 5,
+      "value": 25,
+      "description": "Order a monster to hit one hero hard. The hit lands after the DM turn.",
+      "temporary": true
+    },
+    {
+      "id": "weakening_curse",
+      "name": "Weakening Curse",
+      "side": "DUNGEON_MASTER",
+      "effect": "WEAKNESS",
+      "manaCost": 4,
+      "value": 5,
+      "description": "Reduce the attack of one hero.",
+      "temporary": true
     }
   ]
 }

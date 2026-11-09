@@ -77,11 +77,13 @@ namespace msg {
     inline constexpr const char* START  = "start";  // {}                           host only, starts the match
     inline constexpr const char* PLAY   = "play";   // { card, target }             hand index, monster index
     inline constexpr const char* END    = "end";    // {}                           end your turn
+    inline constexpr const char* ROLE   = "role";   // { role }                     lobby only: "HERO" or "DM" (one DM per room)
+    inline constexpr const char* QUEUE  = "queue";  // { card, monster, target }    DM only: order a monster to attack a hero
     inline constexpr const char* LEAVE  = "leave";  // {}
 
     // server -> client
     inline constexpr const char* JOINED = "joined"; // { code, you, host }          you are in a room now
-    inline constexpr const char* LOBBY  = "lobby";  // { code, players[] }          waiting room changed
+    inline constexpr const char* LOBBY  = "lobby";  // { code, players[{id,name,role}] } waiting room changed
     inline constexpr const char* STATE  = "state";  // { round, phase, ... }        match state (only YOUR hand)
     inline constexpr const char* ERROR  = "error";  // { msg }                      request was rejected
     inline constexpr const char* CLOSED = "closed"; // { msg }                      room was closed

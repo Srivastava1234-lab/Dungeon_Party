@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "../net/Protocol.h"
+#include "DMCard.h"
 #include "HeroCard.h"
 
 using nlohmann::json;
@@ -27,6 +28,17 @@ const char* effectName(HeroEffect effect) {
         case HeroEffect::HEAL: return "HEAL";
         case HeroEffect::BUFF: return "BUFF";
         case HeroEffect::SPELL: return "SPELL";
+    }
+    return "ATTACK";
+}
+
+const char* dmEffectName(DMEffect effect) {
+    switch (effect) {
+        case DMEffect::SUMMON: return "SUMMON";
+        case DMEffect::TRAP: return "TRAP";
+        case DMEffect::DEFENSIVE: return "DEFENSIVE";
+        case DMEffect::ATTACK: return "ATTACK";
+        case DMEffect::WEAKNESS: return "WEAKNESS";
     }
     return "ATTACK";
 }
@@ -117,6 +129,8 @@ void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
     if (type == net::msg::START) return handleStart(peer, *room, *member);
     if (type == net::msg::PLAY) return handlePlay(peer, *room, *member, message);
     if (type == net::msg::END) return handleEnd(peer, *room, *member);
+    if (type == net::msg::ROLE) return handleRole(peer, *room, *member, message);
+    if (type == net::msg::QUEUE) return handleQueue(peer, *room, *member, message);
     sendError(peer, "Unknown message type");
 }
 
@@ -168,6 +182,19 @@ void RoomServer::handleJoin(ENetPeer* peer, const json& message) {
 
     std::cout << member.name << " joined room " << room.code << "\n";
     send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", member.id}});
+    broadcastLobby(room);
+}
+
+// Lobby only: a member picks "HERO" or "DM". Only one member can be the DM.
+void RoomServer::handleRole(ENetPeer* peer, Room& room, Member& member, const json& message) {
+    if (room.match) return sendError(peer, "The match has already started");
+    const std::string role = readString(message, "role");
+    if (role != "HERO" && role != "DM") return sendError(peer, "Role must be HERO or DM");
+    if (role == "DM") {
+        for (const auto& m : room.members)
+            if (m.id != member.id && m.role == "DM") return sendError(peer, "The Dungeon Master role is already taken");
+    }
+    member.role = role;
     broadcastLobby(room);
 }
 
@@ -232,13 +259,17 @@ void RoomServer::handleStart(ENetPeer* peer, Room& room, Member& member) {
     broadcastState(room);
 }
 
-std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
+std::unique_ptr<Match> RoomServer::buildMatch(Room& room) {
     const LevelDefinition level = gameData.loadLevel(1);
     auto match = std::make_unique<Match>(room.code, level.maxRounds);
 
-    // One hero per member. The Hero's playerId is the member id, which is how we
-    // find out whose turn it is.
+    // One hero per member who is not the DM. The Hero's playerId is the member id, which is
+    // how we find out whose turn it is.
+    const Member* dmMember = nullptr;
+    int heroCount = 0;
     for (const auto& member : room.members) {
+        if (member.role == "DM") { dmMember = &member; continue; }
+        ++heroCount;
         const HeroDefinition& heroDef = gameData.getHero(member.heroId);
         auto hero = std::make_unique<Hero>(member.id, member.name, heroDef.toHeroType(), heroDef.maxMana);
         for (const auto& entry : heroDef.startingDeck) {
@@ -250,11 +281,30 @@ std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
         match->addPlayer(std::move(hero));
     }
 
-    // Sprint 2 prototype: the server plays the Dungeon Master as a bot that just ends its turn.
-    // A human DM is one more Member with a "role" field - see the notes in net/PROTOCOL.md.
-    match->addPlayer(std::make_unique<DungeonMaster>("dm", "Dungeon Master", 10, true));
+    if (heroCount == 0) throw std::runtime_error("at least one hero is needed");
 
-    const int heroCount = static_cast<int>(room.members.size());
+    // A member who picked DM plays the Dungeon Master. Without one, the server plays a bot DM
+    // that just ends its turn (the Sprint 2 prototype behaviour).
+    std::unique_ptr<DungeonMaster> dm;
+    if (dmMember) {
+        dm = std::make_unique<DungeonMaster>(dmMember->id, dmMember->name, 10, false);
+        // DM deck: every DUNGEON_MASTER card in cards.json, 3 copies each, interleaved.
+        room.dmDeckTotal = 0;
+        for (int copy = 0; copy < 3; ++copy) {
+            for (const auto& card : gameData.getCards()) {
+                if (card.side != Side::DUNGEON_MASTER || !card.dmEffect) continue;
+                dm->addToDeck(std::make_unique<DMCard>(card.name, card.manaCost, *card.dmEffect, card.value));
+                ++room.dmDeckTotal;
+            }
+        }
+        for (int i = 0; i < 3; ++i) dm->drawCard(); // starting hand
+    } else {
+        dm = std::make_unique<DungeonMaster>("dm", "Dungeon Master", 10, true);
+    }
+    room.dm = dm.get();
+    room.queued = json::array();
+    match->addPlayer(std::move(dm));
+
     for (const auto& entry : level.monsters) {
         const MonsterDefinition& monsterDef = gameData.getMonster(entry.monsterId);
         for (int i = 0; i < entry.countPerHero * heroCount; ++i)
@@ -277,6 +327,7 @@ void RoomServer::skipBotAndAbsentTurns(Room& room) {
                 if (m.id == active->getPlayerId() && m.peer) humanCanPlay = true;
         }
         if (humanCanPlay) return;
+        if (dynamic_cast<DungeonMaster*>(active)) room.queued = json::array();
         room.match->endTurn(*active);
     }
 }
@@ -290,14 +341,49 @@ void RoomServer::handlePlay(ENetPeer* peer, Room& room, Member& member, const js
     if (!readIndex(message, "card", cardIndex) || !readIndex(message, "target", targetIndex))
         return sendError(peer, "play needs 'card' and 'target' numbers");
     if (cardIndex >= active->getHandSize()) return sendError(peer, "No card at that position");
-    const auto& monsters = room.match->getMonsters();
-    if (targetIndex >= monsters.size()) return sendError(peer, "No monster at that position");
 
     try {
-        room.match->apply(active->getHandCard(cardIndex), *monsters[targetIndex]); // Match validates the rest
+        if (dynamic_cast<DungeonMaster*>(active)) {
+            // The DM's targets are heroes (Weakening Curse). Attack cards go through "queue".
+            const auto& heroes = room.match->getHeroes();
+            if (targetIndex >= heroes.size()) return sendError(peer, "No hero at that position");
+            room.match->apply(active->getHandCard(cardIndex), *heroes[targetIndex]);
+        } else {
+            const auto& monsters = room.match->getMonsters();
+            if (targetIndex >= monsters.size()) return sendError(peer, "No monster at that position");
+            room.match->apply(active->getHandCard(cardIndex), *monsters[targetIndex]); // Match validates the rest
+        }
     } catch (const std::exception& e) {
         return sendError(peer, e.what());
     }
+    broadcastState(room);
+}
+
+// DM only: order a living monster to hit a living hero with an attack card from the DM's hand.
+// The hit is stored by Match and lands when the DM ends the turn.
+void RoomServer::handleQueue(ENetPeer* peer, Room& room, Member& member, const json& message) {
+    if (!room.match) return sendError(peer, "The match has not started");
+    auto* dm = dynamic_cast<DungeonMaster*>(room.match->getActivePlayer());
+    if (!dm || dm->getPlayerId() != member.id) return sendError(peer, "Only the Dungeon Master can do this, on their turn");
+
+    std::size_t cardIndex = 0, monsterIndex = 0, targetIndex = 0;
+    if (!readIndex(message, "card", cardIndex) || !readIndex(message, "monster", monsterIndex) ||
+        !readIndex(message, "target", targetIndex))
+        return sendError(peer, "queue needs 'card', 'monster' and 'target' numbers");
+    if (cardIndex >= dm->getHandSize()) return sendError(peer, "No card at that position");
+    const auto& monsters = room.match->getMonsters();
+    const auto& heroes = room.match->getHeroes();
+    if (monsterIndex >= monsters.size()) return sendError(peer, "No monster at that position");
+    if (targetIndex >= heroes.size()) return sendError(peer, "No hero at that position");
+
+    const Card& card = dm->getHandCard(cardIndex);
+    const std::string cardName = card.getName();
+    try {
+        room.match->queueMonsterAttack(*dm, *monsters[monsterIndex], card, *heroes[targetIndex]);
+    } catch (const std::exception& e) {
+        return sendError(peer, e.what());
+    }
+    room.queued.push_back({{"monster", monsterIndex}, {"target", targetIndex}, {"card", cardName}});
     broadcastState(room);
 }
 
@@ -306,6 +392,7 @@ void RoomServer::handleEnd(ENetPeer* peer, Room& room, Member& member) {
     Player* active = room.match->getActivePlayer();
     if (!active || active->getPlayerId() != member.id) return sendError(peer, "It is not your turn");
 
+    if (dynamic_cast<DungeonMaster*>(active)) room.queued = json::array(); // the orders are carried out now
     room.match->endTurn(*active);
     skipBotAndAbsentTurns(room);
     broadcastState(room);
@@ -326,7 +413,7 @@ void RoomServer::sendError(ENetPeer* peer, const std::string& text) {
 
 void RoomServer::broadcastLobby(const Room& room) {
     json players = json::array();
-    for (const auto& m : room.members) players.push_back({{"id", m.id}, {"name", m.name}});
+    for (const auto& m : room.members) players.push_back({{"id", m.id}, {"name", m.name}, {"role", m.role}});
     const json message = {{"t", net::msg::LOBBY}, {"code", room.code}, {"host", room.hostId}, {"players", players}};
     for (const auto& m : room.members) send(m.peer, message); // only this room's members
 }
@@ -374,6 +461,33 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
         }
     }
     state["heroes"] = heroes;
+
+    // The Dungeon Master. Everyone sees who it is; only the DM sees their own mana, deck and hand.
+    state["role"] = viewer.role;
+    if (room.dm) {
+        const DungeonMaster& dm = *room.dm;
+        json dmInfo = {{"id", dm.getPlayerId()}, {"name", dm.getName()}, {"human", !dm.isBot()},
+                       {"handSize", dm.getHandSize()}};
+        if (dm.getPlayerId() == viewer.id) {
+            dmInfo["mana"] = dm.getMana();
+            dmInfo["maxMana"] = dm.getMaxMana();
+            dmInfo["cardsPlayed"] = dm.getCardsPlayedThisTurn();
+            dmInfo["deckSize"] = room.dmDeckTotal - static_cast<int>(dm.getHandSize()) - static_cast<int>(dm.getDiscardSize());
+            dmInfo["discardSize"] = dm.getDiscardSize();
+            dmInfo["queued"] = room.queued;
+            json hand = json::array();
+            for (std::size_t i = 0; i < dm.getHandSize(); ++i) {
+                const Card& card = dm.getHandCard(i);
+                const auto* dmCard = dynamic_cast<const DMCard*>(&card);
+                hand.push_back({{"name", card.getName()}, {"cost", card.getManaCost()},
+                                {"effect", dmCard ? dmEffectName(dmCard->getEffect()) : "ATTACK"},
+                                {"value", dmCard ? dmCard->getValue() : 0}});
+            }
+            state["hand"] = hand;
+            state["cardsPlayed"] = dm.getCardsPlayedThisTurn();
+        }
+        state["dm"] = dmInfo;
+    }
 
     json monsters = json::array();
     for (const auto& monster : match.getMonsters())
