@@ -23,6 +23,12 @@ HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, std::optional<Hero
         }
     }
 
+HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, SpellTarget spellTarget, int freeze)
+    : HeroCard(std::move(n), c, e, v) {
+    target = spellTarget;
+    freezeRounds = freeze;
+}
+
 bool HeroCard::canBePlayedBy(const Player& player) const {
     const Hero* hero = dynamic_cast<const Hero*>(&player);
 

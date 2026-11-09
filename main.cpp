@@ -46,6 +46,9 @@ static const char* roleName(LobbyRole role){
     
     case LobbyRole::DM:
         return "DM";
+    }
+    return "";
+}
 
 // Start -> Menu (Host or Join) -> Connecting -> Lobby -> Battle
 // (Your teammate's Character/Name screen can easily slot between Start and Menu!)
@@ -119,7 +122,10 @@ int main() {
     std::unique_ptr<GameData> gameData;
     std::string dataErrorMessage;
     std::map<std::string, GLuint> heroTextures, monsterTextures;
+    int roleW = 0, roleH = 0;
     GLuint bgTexture = 0;
+    GLuint warriorTexture = 0, healerTexture = 0; // role cards in the lobby (SCRUM-35)
+    LobbyRole myRole = LobbyRole::None;
     int w = 0, h = 0;
     try {
         gameData = std::make_unique<GameData>(GameData::defaultDataDirectory());
@@ -138,6 +144,8 @@ int main() {
         std::cerr << dataErrorMessage << "\n";
     }
     LoadTextureFromFile(projectPath("assets/Level_1_Artwork.png").c_str(), &bgTexture, &w, &h);
+    LoadTextureFromFile(projectPath("assets/Warrior_Artwork.png").c_str(), &warriorTexture, &roleW, &roleH);
+    LoadTextureFromFile(projectPath("assets/Healer_Artwork.png").c_str(), &healerTexture, &roleW, &roleH);
 
     auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) {
         auto it = textures.find(key);
@@ -299,19 +307,6 @@ int main() {
                     startConnecting(serverBuf, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
                 }
 
-                if (chosen)
-                {
-                    ImGui::PopStyleColor();
-                }
-
-                ImGui::EndDisabled();
-
-                if (clicked)
-                {
-                    cuurentPlayer.role = role;
-                }
-
-                ImGui::SameLine();
             }
             if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
             ImGui::End();
@@ -330,6 +325,24 @@ int main() {
                                   id == myId ? "  <- you" : "");
             }
             ImGui::Spacing();
+
+            // ROLE CARDS (SCRUM-35, Soroush). TODO: send the chosen role to the server and lock DM
+            // once someone has it - the server doesn't know about roles yet, so this is local only.
+            ImGui::Text("Your role: %s", roleName(myRole));
+            const LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Wizard, LobbyRole::Healer, LobbyRole::DM};
+            for (LobbyRole role : roles) {
+                const bool chosen = (role == myRole);
+                GLuint tex = role == LobbyRole::Warrior ? warriorTexture : role == LobbyRole::Healer ? healerTexture : 0;
+                if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
+                const bool clicked = tex ? ImGui::ImageButton(roleName(role), (ImTextureID)(intptr_t)tex, ImVec2(120, 120))
+                                         : ImGui::Button(roleName(role), ImVec2(120, 120));
+                if (chosen) ImGui::PopStyleColor();
+                if (clicked) myRole = role;
+                ImGui::SameLine();
+            }
+            ImGui::NewLine();
+            ImGui::Spacing();
+
             if (myId == hostId) {
                 if (ImGui::Button("Start match", ImVec2(200, 40)))
                     client.send({{"t", net::msg::START}});

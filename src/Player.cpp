@@ -74,7 +74,8 @@ void Player::playCard(const Card& card, const std::vector<Targetable*>& targets)
 
     if (hero != nullptr && heroCard != nullptr && heroCard->getEffect() == HeroEffect::SHIELD) {
 
-        Hero* shieldTarget = dynamic_cast<Hero*>(&target);
+        // Shield always has exactly one target (playCard now receives a list since the spell merge)
+        Hero* shieldTarget = targets.size() == 1 ? dynamic_cast<Hero*>(targets.front()) : nullptr;
 
         if (shieldTarget == nullptr) {
             throw std::invalid_argument("Shield requires a hero target");
