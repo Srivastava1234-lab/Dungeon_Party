@@ -93,3 +93,31 @@ void Hero::addShield(int amount) {
 int Hero::getShield() const {
     return shield;
 }
+
+void Hero::armManaTrap() {
+    if (!isAlive()) {
+        return;
+    }
+
+    manaTrapActive = true;
+    manaSpentForTrap = 0;
+}
+
+void Hero::recordManaSpentForTrap(int amount) {
+    if (!manaTrapActive || amount <= 0) {
+        return;
+    }
+
+    // Trigger only when total spending would exceed 15.
+    if (amount > 15 - manaSpentForTrap) {
+        clearManaTrap();
+        takeDamage(10);
+    } else {
+        manaSpentForTrap += amount;
+    }
+}
+
+void Hero::clearManaTrap() {
+    manaTrapActive = false;
+    manaSpentForTrap = 0;
+}

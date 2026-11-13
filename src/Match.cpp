@@ -134,8 +134,8 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     const DMCard* dmCard = dynamic_cast<const DMCard*>(&c);
 
     if (dmCard != nullptr) {
-        if (dmCard->getEffect() != DMEffect::WEAKNESS) {
-            return fail("Use the monster attack queue for attack cards");
+        if (dmCard->getEffect() != DMEffect::WEAKNESS && dmCard->getEffect() != DMEffect::MANA_TRAP) {
+            return fail("This DM card requires a living hero in this match");        
         }
 
         for (std::size_t i = 0; i < heroes.size(); i++) {
@@ -177,8 +177,7 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
                         return fail("Only Healers can heal allies");
                     }
 
-                    if (!targetingSelf &&
-                        hc->getSupportTarget() == SupportTarget::SELF_ONLY) {
+                    if (!targetingSelf && hc->getSupportTarget() == SupportTarget::SELF_ONLY) {
                         return fail("This healing card can only target yourself");
                     }
                 }
@@ -248,6 +247,13 @@ void Match::endTurn(Player& p) {
         throw std::invalid_argument("Not the active player");
     } 
     if (phase == Phase::HERO_TURN) {
+        // An untriggered Mana Trap expires after this hero's turn.
+        Hero* endingHero = dynamic_cast<Hero*>(&p);
+
+        if (endingHero != nullptr) {
+            endingHero->clearManaTrap();
+        }
+
         do { ++activeHero; } while (activeHero < heroes.size() && !heroes[activeHero]->isAlive());
         if (activeHero < heroes.size()) beginTurn(*heroes[activeHero]);
         else { phase = Phase::DM_TURN; beginTurn(*dm); }

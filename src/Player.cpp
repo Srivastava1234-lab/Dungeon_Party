@@ -112,9 +112,16 @@ void Player::playCard(const Card& card, const std::vector<Targetable*>& targets)
         for (auto* target : targets) card.applyEffect(*target);
     }
 
-    mana -= card.getManaCost();
+    int manaSpent = card.getManaCost();
+
+    mana -= manaSpent;
     cardsPlayedThisTurn++;
     discard(card);
+
+    // Only successful card plays count toward the trap.
+    if (hero != nullptr) {
+        hero->recordManaSpentForTrap(manaSpent);
+    }
 }
 
 const std::string& Player::getName() const {

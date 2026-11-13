@@ -97,7 +97,7 @@ void HeroCard::applyEffect(Targetable& target) const {
 }
 
 void DMCard::applyEffect(Targetable& target) const {
-    if (effect == DMEffect::ATTACK || effect == DMEffect::WEAKNESS) {
+    if (effect == DMEffect::ATTACK || effect == DMEffect::WEAKNESS || effect == DMEffect::MANA_TRAP) {
 
         Hero* hero = dynamic_cast<Hero*>(&target);
 
@@ -111,8 +111,10 @@ void DMCard::applyEffect(Targetable& target) const {
 
         if (effect == DMEffect::ATTACK) {
             hero->takeDamage(value);
-        } else {
+        } else if (effect == DMEffect::WEAKNESS) {
             hero->applyWeakness(value);
+        } else {
+            hero->armManaTrap();
         }
     } else {
         throw std::logic_error("This DM effect is not implemented yet");

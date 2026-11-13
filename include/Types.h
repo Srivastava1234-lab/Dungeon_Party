@@ -8,7 +8,7 @@
 enum class SpellTarget { ONE_ENEMY, ALL_ENEMIES, BOSS_ONLY };
 
 enum class HeroEffect { ATTACK, HEAL, BUFF, SPELL, SHIELD, FIREBALL};
-enum class DMEffect { SUMMON, TRAP, DEFENSIVE, ATTACK, WEAKNESS};
+enum class DMEffect { SUMMON, TRAP, DEFENSIVE, ATTACK, WEAKNESS, MANA_TRAP};
 enum class Phase { ROUND_START, HERO_TURN, DM_TURN, MONSTER_ACTIONS };
 enum class Side { HEROES, DUNGEON_MASTER };
 enum class HeroClass { WARRIOR, RANGER, HEALER };
