@@ -134,7 +134,7 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     const DMCard* dmCard = dynamic_cast<const DMCard*>(&c);
 
     if (dmCard != nullptr) {
-        if (dmCard->getEffect() != DMEffect::WEAKNESS && dmCard->getEffect() != DMEffect::MANA_TRAP) {
+        if (dmCard->getEffect() != DMEffect::WEAKNESS && dmCard->getEffect() != DMEffect::MANA_TRAP && dmCard->getEffect() != DMEffect::DISCARD_TRAP && dmCard->getEffect() != DMEffect::MANA_DRAIN_TRAP) {
             return fail("This DM card requires a living hero in this match");        
         }
 

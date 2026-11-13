@@ -94,27 +94,33 @@ int Hero::getShield() const {
     return shield;
 }
 
-void Hero::armManaTrap() {
+void Hero::armManaTrap(TrapEffect effect) {
     if (!isAlive()) {
         return;
     }
 
     manaTrapActive = true;
     manaSpentForTrap = 0;
+    activeTrapEffect = effect;
 }
 
-void Hero::recordManaSpentForTrap(int amount) {
+std::optional<TrapEffect> Hero::recordManaSpentForTrap(int amount) {
     if (!manaTrapActive || amount <= 0) {
-        return;
+        return std::nullopt;
     }
 
-    // Trigger only when total spending would exceed 15.
-    if (amount > 15 - manaSpentForTrap) {
+    // Exactly 20 does not trigger the trap.
+    if (amount > 20 - manaSpentForTrap) {
+        TrapEffect triggeredEffect = activeTrapEffect;
+
         clearManaTrap();
-        takeDamage(10);
-    } else {
-        manaSpentForTrap += amount;
+
+        return triggeredEffect;
     }
+
+    manaSpentForTrap += amount;
+
+    return std::nullopt;
 }
 
 void Hero::clearManaTrap() {

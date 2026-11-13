@@ -97,27 +97,36 @@ void HeroCard::applyEffect(Targetable& target) const {
 }
 
 void DMCard::applyEffect(Targetable& target) const {
-    if (effect == DMEffect::ATTACK || effect == DMEffect::WEAKNESS || effect == DMEffect::MANA_TRAP) {
+    bool supportedEffect = effect == DMEffect::ATTACK || effect == DMEffect::WEAKNESS || effect == DMEffect::MANA_TRAP || effect == DMEffect::DISCARD_TRAP || effect == DMEffect::MANA_DRAIN_TRAP;
 
-        Hero* hero = dynamic_cast<Hero*>(&target);
-
-        if (hero == nullptr) {
-            throw std::invalid_argument("This card must target a hero");
-        }
-
-        if (!hero->isAlive()) {
-            throw std::invalid_argument("Cannot target a defeated hero");
-        }
-
-        if (effect == DMEffect::ATTACK) {
-            hero->takeDamage(value);
-        } else if (effect == DMEffect::WEAKNESS) {
-            hero->applyWeakness(value);
-        } else {
-            hero->armManaTrap();
-        }
-    } else {
+    if (!supportedEffect) {
         throw std::logic_error("This DM effect is not implemented yet");
+    }
+
+    Hero* hero = dynamic_cast<Hero*>(&target);
+
+    if (hero == nullptr) {
+        throw std::invalid_argument("This card must target a hero");
+    }
+
+    if (!hero->isAlive()) {
+        throw std::invalid_argument("Cannot target a defeated hero");
+    }
+
+    if (effect == DMEffect::ATTACK) {
+        hero->takeDamage(value);
+
+    } else if (effect == DMEffect::WEAKNESS) {
+        hero->applyWeakness(value);
+
+    } else if (effect == DMEffect::MANA_TRAP) {
+        hero->armManaTrap(TrapEffect::DAMAGE);
+
+    } else if (effect == DMEffect::DISCARD_TRAP) {
+        hero->armManaTrap(TrapEffect::DISCARD);
+
+    } else if (effect == DMEffect::MANA_DRAIN_TRAP) {
+        hero->armManaTrap(TrapEffect::MANA_DRAIN);
     }
 }
 

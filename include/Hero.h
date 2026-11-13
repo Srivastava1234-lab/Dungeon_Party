@@ -3,6 +3,7 @@
 #include "Player.h"
 #include "Targetable.h"
 #include "Types.h"
+#include <optional>
 
 class Hero : public Player, public Targetable{
 private:
@@ -12,6 +13,7 @@ private:
     int shield = 0;
     bool manaTrapActive = false;
     int manaSpentForTrap = 0;
+    TrapEffect activeTrapEffect = TrapEffect::DAMAGE;
 
 public:
     Hero(std::string id, std::string name, HeroType type, int maxMana, bool bot = false);
@@ -26,8 +28,8 @@ public:
     int getAttackReduction() const;
     void addShield(int amount);
     int getShield() const;
-    void armManaTrap();
-    void recordManaSpentForTrap(int amount);
+    void armManaTrap(TrapEffect effect);
+    std::optional<TrapEffect> recordManaSpentForTrap(int amount);
     void clearManaTrap();
 };
 
