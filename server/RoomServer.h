@@ -44,8 +44,7 @@ private:
         ENetPeer* peer = nullptr; // nullptr = disconnected during the match (their turns are skipped)
         std::string id;           // "p1", "p2", ... unique inside the room; also the Hero's playerId
         std::string name;
-        std::string heroId;       // which hero from heroes.json this member plays
-        std::string role = "HERO"; // "HERO" or "DM" (picked in the lobby; at most one DM per room)
+        std::string role;         // "" = not chosen yet, "dm", or a hero id from heroes.json ("warrior", "healer")
     };
 
     struct Room {
@@ -53,10 +52,8 @@ private:
         std::string hostId;
         std::vector<Member> members;
         std::unique_ptr<Match> match; // nullptr while waiting in the lobby
+        nlohmann::json queued = nlohmann::json::array(); // DM orders this turn {monster, hero, card} (SCRUM-40)
         int nextMemberNumber = 1;
-        const DungeonMaster* dm = nullptr; // the match's DM (human or bot); owned by 'match'
-        int dmDeckTotal = 0;               // cards the DM deck started with (deck size = total - hand - discard)
-        nlohmann::json queued = nlohmann::json::array(); // DM orders this turn: {monster, target, card}
     };
 
     struct PeerInfo {
@@ -84,15 +81,15 @@ private:
     void handleStart(ENetPeer* peer, Room& room, Member& member);
     void handlePlay(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
     void handleEnd(ENetPeer* peer, Room& room, Member& member);
-    void handleRole(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
-    void handleQueue(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
+    void handleCommand(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
+    void handleBoss(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
 
     // Helpers
     void leaveRoom(ENetPeer* peer);
     Room* roomOf(ENetPeer* peer);
     Member* memberOf(Room& room, ENetPeer* peer);
     std::string newRoomCode();
-    std::unique_ptr<Match> buildMatch(Room& room);
+    std::unique_ptr<Match> buildMatch(const Room& room);
     void skipBotAndAbsentTurns(Room& room);
     void playBotDungeonMaster(Match& match, DungeonMaster& dm); // queues attacks for the computer DM
     DungeonMaster* activeDungeonMaster(Room& room, const Member& member);

@@ -223,7 +223,12 @@ int main() {
         }
         pump(server, roles, [&] { return dmPlayer.lastOfType(net::msg::STATE)["active"] == dmPlayer.lastOfType(net::msg::STATE)["you"]; });
         dmView = dmPlayer.lastOfType(net::msg::STATE);
-        check(dmView["hand"].size() >= 1 && dmView["hand"][0]["effect"] == "DM_ATTACK", "DM sees their attack cards on their turn");
+        check(dmView["hand"].size() >= 1 && dmView["dm"].contains("deckSize"), "DM sees their hand and deck size on their turn");
+        // The DM deck also has Weakening Curse; pick an attack card so the hero takes damage.
+        int attackCard = -1;
+        for (std::size_t i = 0; i < dmView["hand"].size(); ++i)
+            if (dmView["hand"][i]["effect"] == "DM_ATTACK" && attackCard < 0) attackCard = static_cast<int>(i);
+        check(attackCard >= 0, "DM has an attack card in hand");
 
         // A hero cannot give monster orders
         heroPlayer.received.clear();
@@ -234,9 +239,10 @@ int main() {
         // DM orders monster 0 to attack hero 0, then ends the turn: the hero takes damage
         const int healerHpBefore = dmView["heroes"][0]["hp"];
         dmPlayer.received.clear();
-        dmPlayer.net.send({{"t", net::msg::COMMAND}, {"card", 0}, {"monster", 0}, {"hero", 0}});
+        dmPlayer.net.send({{"t", net::msg::COMMAND}, {"card", attackCard}, {"monster", 0}, {"hero", 0}});
         pump(server, roles, [&] { return !dmPlayer.lastOfType(net::msg::STATE).is_null() || !dmPlayer.lastOfType(net::msg::ERROR).is_null(); });
         check(dmPlayer.lastOfType(net::msg::ERROR).is_null(), "DM's monster order is accepted");
+        check(dmPlayer.lastOfType(net::msg::STATE)["dm"]["queued"].size() == 1, "the order shows in the DM's queued list");
         dmPlayer.received.clear();
         dmPlayer.net.send({{"t", net::msg::END}});
         pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::STATE).is_null() &&
