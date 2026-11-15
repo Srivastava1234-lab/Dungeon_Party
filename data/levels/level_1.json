@@ -21,8 +21,16 @@
     "maxMana": 10,
     "startingDeck": [
       {
-        "card": "monster_attack",
-        "count": 12
+        "card": "goblin_slash",
+        "count": 6
+      },
+      {
+        "card": "heavy_smash",
+        "count": 3
+      },
+      {
+        "card": "weakening_curse",
+        "count": 3
       }
     ],
     "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."

@@ -31,8 +31,6 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 | `command`| `card`, `monster`, `hero` | DM: order monster #m to attack hero #h with DM card #c; happens on End turn |
 | `boss`   | `hero`              | DM: order the final boss to attack hero #h (once it has arrived) |
 | `end`    | -                   | end your turn                               |
-| `role`   | `role`              | lobby only: `"HERO"` or `"DM"`; only one DM per room |
-| `queue`  | `card`, `monster`, `target` | DM only, on the DM turn: index into your hand (an ATTACK card), index into `monsters`, index into `heroes`. The hit lands when the DM ends the turn |
 | `leave`  | -                   | leave the room (closing the connection also works) |
 
 ### Server → client
@@ -45,19 +43,18 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 | `error`  | `msg`                                     | your request was rejected (wrong turn, not enough mana, ...) |
 | `closed` | `msg`                                     | room closed |
 
-`state`: `code, you, host, round, phase, active (player id or "dm"), winner (null | "HEROES" | "DUNGEON_MASTER"),
-heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive}],
-hand[{name, cost, effect, value}]` (only yours), `cardsPlayed`, `role` (yours: `"HERO"` or `"DM"`),
-`dm{id, name, human, handSize}`. For the DM viewer only, `dm` also has `mana, maxMana, cardsPlayed, deckSize, discardSize,
-queued[{monster, target, card}]`, and `hand` is the DM's hand (effects `ATTACK` / `WEAKNESS`). The DM plays `WEAKNESS` cards with
-`play` (`target` = index into `heroes`) and `ATTACK` cards with `queue`.
+`state`: `code, you, host, role ("hero" | "dm"), round, phase, active (player id), winner (null | "HEROES" | "DUNGEON_MASTER"),
+heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive, boss}],
+dm{id, name, human, connected, mana*, maxMana*, deckSize*, queued*[{monster, hero, card}]}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
+`cardsPlayed`, `canBossAttack*`. Fields marked * are only sent to the DM.
 
 ## Rules
 
-- Everyone plays the hero `warrior`; decks come from `heroes.json` + `cards.json`.
-- If one member picked the DM role in the lobby, that member plays the Dungeon Master (they get no hero). The DM deck is
-  every `DUNGEON_MASTER` card in `cards.json`, three copies of each; the DM starts with 3 cards and draws one per turn.
-  If nobody picked DM, the Dungeon Master is a server bot that ends its turn immediately.
+- Players pick a role in the lobby. No role = the level's default hero (`defaultHeroes` in the level file).
+- Heroes come from `heroes.json`, the DM's mana and deck from the `dungeonMaster` block in the level file.
+- The DM's orders this turn are kept on the server (`dm.queued`) and carried out when the DM ends the turn (SCRUM-40).
+- No human DM = the computer plays the DM: each living monster attacks the weakest hero, and the boss attacks too.
+- The final boss from the level file arrives in its `arrivalRound`; its health is `healthPerHero` x number of heroes.
 - If the host leaves the lobby, the next player becomes host. If someone leaves during the match, their hero
   stays and their turns are skipped. Rejoining is not supported yet.
 - The room closes when its last player leaves.

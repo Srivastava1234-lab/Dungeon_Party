@@ -33,6 +33,7 @@ public:
     const Card& getHandCard(std::size_t index) const;
     std::size_t getHandSize() const;
     std::size_t getDiscardSize() const;
+    std::size_t getDeckSize() const { return deck.size(); }
 private:
     // Match alone authorizes actions; callers cannot bypass turn validation.
     void playCard(const Card& card, const std::vector<Targetable*>& targets);
