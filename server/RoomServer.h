@@ -80,6 +80,7 @@ private:
     // Requests
     void handleCreate(ENetPeer* peer, const nlohmann::json& message);
     void handleJoin(ENetPeer* peer, const nlohmann::json& message);
+    void handleRole(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
     void handleStart(ENetPeer* peer, Room& room, Member& member);
     void handlePlay(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
     void handleEnd(ENetPeer* peer, Room& room, Member& member);
@@ -93,6 +94,8 @@ private:
     std::string newRoomCode();
     std::unique_ptr<Match> buildMatch(Room& room);
     void skipBotAndAbsentTurns(Room& room);
+    void playBotDungeonMaster(Match& match, DungeonMaster& dm); // queues attacks for the computer DM
+    DungeonMaster* activeDungeonMaster(Room& room, const Member& member);
 
     void send(ENetPeer* peer, const nlohmann::json& message);
     void sendError(ENetPeer* peer, const std::string& text);

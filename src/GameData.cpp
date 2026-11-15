@@ -284,6 +284,7 @@ void GameData::loadCards() {
         card.manaCost = readNumber(entry, "manaCost", 0, where);
         card.value = readNumber(entry, "value", 0, where);
         card.description = readText(entry, "description", where);
+        if (entry.contains("image")) card.image = readImagePath(entry, where); // optional
         card.temporary = readTrueFalse(entry, "temporary", where);
 
         cards.push_back(card);
@@ -442,6 +443,30 @@ LevelDefinition GameData::loadLevel(int number) const {
         const auto* definition = findMonster(level.bossId);
         if (!definition || !definition->boss || level.bossArrivalRound > level.maxRounds) {
             fail(fileName, "invalid boss definition or arrival round");
+        }
+    }
+
+    // dungeonMaster: { "maxMana": <number>, "startingDeck": [ { "card": "<id>", "count": <number> } ] }
+    if (root.contains("dungeonMaster")) {
+        const std::string where = fileName + ", dungeonMaster";
+        const json& dm = root.at("dungeonMaster");
+        requireObject(dm, where);
+        level.dmMaxMana = readNumber(dm, "maxMana", 0, where);
+        const json deck = readList(dm, "startingDeck", where, true);
+        for (std::size_t i = 0; i < deck.size(); ++i) {
+            const std::string deckWhere = where + ", startingDeck #" + std::to_string(i + 1);
+            requireObject(deck[i], deckWhere);
+            DeckEntry line;
+            line.cardId = readText(deck[i], "card", deckWhere);
+            line.count = readNumber(deck[i], "count", 1, deckWhere);
+            const CardDefinition* card = findCard(line.cardId);
+            if (card == nullptr) {
+                fail(deckWhere, "unknown card \"" + line.cardId + "\" (not found in cards.json)");
+            }
+            if (card->side != Side::DUNGEON_MASTER) {
+                fail(deckWhere, "card \"" + line.cardId + "\" is a HEROES card and cannot be in the DM deck");
+            }
+            level.dmDeck.push_back(line);
         }
     }
 

@@ -25,8 +25,11 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 |----------|---------------------|---------------------------------------------|
 | `create` | `name`              | make a room; you become host                |
 | `join`   | `name`, `code`      | join a room that hasn't started yet         |
+| `role`   | `role`              | lobby: `"dm"` or a hero id (`"warrior"`, `"healer"`); only one DM per room |
 | `start`  | -                   | host only                                   |
-| `play`   | `card`, `target`    | index into your hand, index into `monsters` |
+| `play`   | `card`, `target`, `targetType` | hero: hand index, then `"monster"` + index into `monsters` or `"hero"` + index into `heroes` (Heal) |
+| `command`| `card`, `monster`, `hero` | DM: order monster #m to attack hero #h with DM card #c; happens on End turn |
+| `boss`   | `hero`              | DM: order the final boss to attack hero #h (once it has arrived) |
 | `end`    | -                   | end your turn                               |
 | `role`   | `role`              | lobby only: `"HERO"` or `"DM"`; only one DM per room |
 | `queue`  | `card`, `monster`, `target` | DM only, on the DM turn: index into your hand (an ATTACK card), index into `monsters`, index into `heroes`. The hit lands when the DM ends the turn |
@@ -49,7 +52,7 @@ hand[{name, cost, effect, value}]` (only yours), `cardsPlayed`, `role` (yours: `
 queued[{monster, target, card}]`, and `hand` is the DM's hand (effects `ATTACK` / `WEAKNESS`). The DM plays `WEAKNESS` cards with
 `play` (`target` = index into `heroes`) and `ATTACK` cards with `queue`.
 
-## Rules in this prototype
+## Rules
 
 - Everyone plays the hero `warrior`; decks come from `heroes.json` + `cards.json`.
 - If one member picked the DM role in the lobby, that member plays the Dungeon Master (they get no hero). The DM deck is
@@ -58,6 +61,13 @@ queued[{monster, target, card}]`, and `hand` is the DM's hand (effects `ATTACK` 
 - If the host leaves the lobby, the next player becomes host. If someone leaves during the match, their hero
   stays and their turns are skipped. Rejoining is not supported yet.
 - The room closes when its last player leaves.
+
+## Hosting: this computer vs. a server
+
+- **This computer**: the game runs a RoomServer inside itself. Only players on the same network can reach it,
+  unless the router forwards UDP 7777 to this computer.
+- **A server**: the game connects to a `dungeon_server` somewhere else (e.g. the team laptop). This is the way to
+  play across networks - that machine must be reachable (port forwarding or Tailscale).
 
 ## Running it
 

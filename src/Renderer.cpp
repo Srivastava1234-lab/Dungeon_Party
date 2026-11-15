@@ -41,36 +41,40 @@ bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_wid
     return true;
 }
 
-bool drawCharacter(const Character& c)
+bool drawCharacter(const Character& c, float scale, bool highlighted)
 {
-    ImGui::BeginChild(c.name.c_str(), ImVec2(240, 360), false);
+    const float width = 240.0f * scale, barWidth = 220.0f * scale;
+    // "character" is the ID inside the caller's PushID scope, so two "Goblin"s don't merge into one widget.
+    if (highlighted) ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 220, 90, 255));
+    ImGui::BeginChild("character", ImVec2(width, 100.0f + 260.0f * scale), highlighted, ImGuiWindowFlags_NoScrollbar);
 
-    ImGui::Text("%s", c.name.c_str());
+    ImGui::TextUnformatted(c.name.c_str());
 
     char text[32];
     snprintf(text, sizeof(text), "%d / %d", c.health, c.maxHealth);
-    ImGui::ProgressBar((float)c.health / c.maxHealth, ImVec2(220, 0), text);
+    ImGui::ProgressBar(c.maxHealth > 0 ? (float)c.health / c.maxHealth : 0.0f, ImVec2(barWidth, 0), text);
 
     if (c.maxMana > 0) {
         char manaText[32];
         snprintf(manaText, sizeof(manaText), "%d / %d", c.mana, c.maxMana);
-        ImGui::ProgressBar((float)c.mana / c.maxMana, ImVec2(220, 0), manaText);
+        ImGui::ProgressBar((float)c.mana / c.maxMana, ImVec2(barWidth, 0), manaText);
     }
 
     ImGui::Spacing();
 
     if (c.textureID != 0)
     {
-        ImGui::Image((ImTextureID)(intptr_t)c.textureID, ImVec2(220, 260));
+        ImGui::Image((ImTextureID)(intptr_t)c.textureID, ImVec2(barWidth, 260 * scale));
     }
     else
     {
         ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + 220, p.y + 260), IM_COL32(90, 90, 90, 255));
-        ImGui::Dummy(ImVec2(220, 260));
+        ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + barWidth, p.y + 260 * scale), IM_COL32(90, 90, 90, 255));
+        ImGui::Dummy(ImVec2(barWidth, 260 * scale));
     }
 
     ImGui::EndChild();
+    if (highlighted) ImGui::PopStyleColor();
     return ImGui::IsItemClicked();
 }
 
@@ -81,16 +85,28 @@ bool drawCard (const CardView& c, bool playable, bool selected)
     if (selected)
         ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(255, 220, 90, 255));
 
-    ImGui::BeginChild(c.name.c_str(), ImVec2(130, 110), true);
+    // "card" is the ID inside the caller's PushID scope, so two cards with the same name stay separate.
+    const float height = c.textureID ? 175.0f : 110.0f;
+    ImGui::BeginChild("card", ImVec2(130, height), true, ImGuiWindowFlags_NoScrollbar);
 
-    ImGui::Text("%s", c.name.c_str());
+    if (c.textureID)
+        ImGui::Image((ImTextureID)(intptr_t)c.textureID, ImVec2(112, 70));
+
+    ImGui::TextWrapped("%s", c.name.c_str());
     ImGui::Text("Cost: %d", c.manaCost);
 
-    switch (c.effect)
-    {
-        case HeroEffect::ATTACK: ImGui::Text("Deal %d damage", c.value); break;
-        case HeroEffect::HEAL:   ImGui::Text("+%d HP", c.value);        break;
-        default:                 ImGui::Text("Effect %d", c.value);      break;
+    if (!c.effectText.empty()) {
+        ImGui::TextWrapped("%s", c.effectText.c_str());
+    } else {
+        switch (c.effect)
+        {
+            case HeroEffect::ATTACK:   ImGui::Text("Deal %d damage", c.value);    break;
+            case HeroEffect::SPELL:    ImGui::Text("Spell: %d damage", c.value);  break;
+            case HeroEffect::FIREBALL: ImGui::Text("Fireball: %d", c.value);      break;
+            case HeroEffect::HEAL:     ImGui::Text("+%d HP", c.value);            break;
+            case HeroEffect::SHIELD:   ImGui::Text("Shield %d", c.value);         break;
+            default:                   ImGui::Text("Effect %d", c.value);         break;
+        }
     }
 
     ImGui::EndChild();

@@ -171,6 +171,104 @@ int main() {
         pump(server, withGuesser, [&] { return server.roomCount() == 1; }, 12000);
         check(true, "room closes when its last player leaves");
 
+        // ===== Roles: a human Dungeon Master =====
+        TestClient heroPlayer, dmPlayer, lateDm;
+        std::vector<TestClient*> roles{&heroPlayer, &dmPlayer, &lateDm};
+        for (auto* c : roles) c->net.connect("127.0.0.1", TEST_PORT);
+        pump(server, roles, [&] {
+            for (auto* c : roles) if (c->net.status() != NetClient::Status::Connected) return false;
+            return true;
+        });
+        heroPlayer.net.send({{"t", net::msg::CREATE}, {"name", "Healer"}});
+        pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::JOINED).is_null(); });
+        const std::string roleCode = heroPlayer.lastOfType(net::msg::JOINED)["code"];
+        dmPlayer.net.send({{"t", net::msg::JOIN}, {"name", "Boss"}, {"code", roleCode}});
+        lateDm.net.send({{"t", net::msg::JOIN}, {"name", "Late"}, {"code", roleCode}});
+        pump(server, roles, [&] { return !dmPlayer.lastOfType(net::msg::JOINED).is_null() && !lateDm.lastOfType(net::msg::JOINED).is_null(); });
+
+        heroPlayer.net.send({{"t", net::msg::ROLE}, {"role", "wizard_that_does_not_exist"}});
+        pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::ERROR).is_null(); });
+        check(true, "unknown role is rejected");
+
+        heroPlayer.net.send({{"t", net::msg::ROLE}, {"role", "healer"}});
+        dmPlayer.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
+        pump(server, roles, [&] {
+            auto lobby = heroPlayer.lastOfType(net::msg::LOBBY);
+            int set = 0;
+            if (!lobby.is_null()) for (const auto& pl : lobby["players"]) if (pl["role"] != "") ++set;
+            return set == 2;
+        });
+        lateDm.received.clear();
+        lateDm.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
+        pump(server, roles, [&] { return !lateDm.lastOfType(net::msg::ERROR).is_null(); });
+        check(lateDm.lastOfType(net::msg::ERROR)["msg"] == "Boss is already the Dungeon Master", "only one player can be DM");
+        lateDm.net.send({{"t", net::msg::ROLE}, {"role", "warrior"}});
+        pump(server, roles, [&] {
+            auto lobby = lateDm.lastOfType(net::msg::LOBBY);
+            return !lobby.is_null() && lobby["players"][2]["role"] == "warrior";
+        });
+
+        heroPlayer.net.send({{"t", net::msg::START}});
+        pump(server, roles, [&] { return !dmPlayer.lastOfType(net::msg::STATE).is_null() && !lateDm.lastOfType(net::msg::STATE).is_null(); });
+        json dmView = dmPlayer.lastOfType(net::msg::STATE);
+        check(dmView["role"] == "dm" && dmView["dm"]["human"] == true, "DM player is the Dungeon Master, not a hero");
+        check(dmView["heroes"].size() == 2, "only the two hero players are heroes");
+        check(dmView["heroes"][0]["heroId"] == "healer", "healer role gives the healer hero");
+
+        // Heroes take their turns
+        for (auto* hero : {&heroPlayer, &lateDm}) {
+            hero->received.clear();
+            hero->net.send({{"t", net::msg::END}});
+            pump(server, roles, [&] { return !hero->lastOfType(net::msg::STATE).is_null(); });
+        }
+        pump(server, roles, [&] { return dmPlayer.lastOfType(net::msg::STATE)["active"] == dmPlayer.lastOfType(net::msg::STATE)["you"]; });
+        dmView = dmPlayer.lastOfType(net::msg::STATE);
+        check(dmView["hand"].size() >= 1 && dmView["hand"][0]["effect"] == "DM_ATTACK", "DM sees their attack cards on their turn");
+
+        // A hero cannot give monster orders
+        heroPlayer.received.clear();
+        heroPlayer.net.send({{"t", net::msg::COMMAND}, {"card", 0}, {"monster", 0}, {"hero", 0}});
+        pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::ERROR).is_null(); });
+        check(true, "heroes cannot command monsters");
+
+        // DM orders monster 0 to attack hero 0, then ends the turn: the hero takes damage
+        const int healerHpBefore = dmView["heroes"][0]["hp"];
+        dmPlayer.received.clear();
+        dmPlayer.net.send({{"t", net::msg::COMMAND}, {"card", 0}, {"monster", 0}, {"hero", 0}});
+        pump(server, roles, [&] { return !dmPlayer.lastOfType(net::msg::STATE).is_null() || !dmPlayer.lastOfType(net::msg::ERROR).is_null(); });
+        check(dmPlayer.lastOfType(net::msg::ERROR).is_null(), "DM's monster order is accepted");
+        dmPlayer.received.clear();
+        dmPlayer.net.send({{"t", net::msg::END}});
+        pump(server, roles, [&] { return !heroPlayer.lastOfType(net::msg::STATE).is_null() &&
+                                          heroPlayer.lastOfType(net::msg::STATE)["round"] == 2; });
+        check(heroPlayer.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < healerHpBefore, "the monster attacked the hero the DM chose");
+
+        // ===== Computer DM attacks too =====
+        TestClient solo;
+        std::vector<TestClient*> soloList{&solo};
+        solo.net.connect("127.0.0.1", TEST_PORT);
+        pump(server, soloList, [&] { return solo.net.status() == NetClient::Status::Connected; });
+        solo.net.send({{"t", net::msg::CREATE}, {"name", "Solo"}});
+        pump(server, soloList, [&] { return !solo.lastOfType(net::msg::JOINED).is_null(); });
+        solo.net.send({{"t", net::msg::START}});
+        pump(server, soloList, [&] { return !solo.lastOfType(net::msg::STATE).is_null(); });
+        const int soloHp = solo.lastOfType(net::msg::STATE)["heroes"][0]["hp"];
+        solo.received.clear();
+        solo.net.send({{"t", net::msg::END}});
+        pump(server, soloList, [&] { auto st = solo.lastOfType(net::msg::STATE); return !st.is_null() && st["round"] == 2; });
+        check(solo.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < soloHp, "computer DM's monsters attack back");
+
+        // Play until the boss arrives (level_1: round 4)
+        for (int r = 0; r < 2; ++r) {
+            solo.received.clear();
+            solo.net.send({{"t", net::msg::END}});
+            pump(server, soloList, [&] { return !solo.lastOfType(net::msg::STATE).is_null(); });
+        }
+        const json round4 = solo.lastOfType(net::msg::STATE); // keep it alive while looping over it
+        bool bossSeen = false;
+        for (const auto& m : round4["monsters"]) bossSeen = bossSeen || m["boss"] == true;
+        check(bossSeen, "final boss arrives in round 4");
+
         std::cout << "All network tests passed.\n";
         return 0;
     } catch (const std::exception& e) {
