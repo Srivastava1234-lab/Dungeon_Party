@@ -52,28 +52,35 @@
       "temporary": true
     },
     {
-      "id": "heal",
-      "name": "Heal",
-      "side": "HEROES",
-      "effect": "HEAL",
-      "manaCost": 8,
-      "value": 15,
-      "description": "Restore health to one hero.",
-      "image": "assets/Heal_Card_Artwork.png",
-      "temporary": true,
-      "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
-    },
-    {
-      "id": "monster_attack",
-      "name": "Monster Attack",
+      "id": "goblin_slash",
+      "name": "Goblin Slash",
       "side": "DUNGEON_MASTER",
       "effect": "ATTACK",
       "manaCost": 3,
-      "value": 12,
-      "description": "Order one monster to attack one hero at the end of the DM turn.",
-      "image": "assets/Attack_Card.png",
+      "value": 15,
+      "description": "Order a monster to hit one hero. The hit lands after the DM turn.",
       "temporary": true,
-      "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
+      "_note": "DM card for SCRUM-40 testing. Played with the queue message, not with play."
+    },
+    {
+      "id": "heavy_smash",
+      "name": "Heavy Smash",
+      "side": "DUNGEON_MASTER",
+      "effect": "ATTACK",
+      "manaCost": 5,
+      "value": 25,
+      "description": "Order a monster to hit one hero hard. The hit lands after the DM turn.",
+      "temporary": true
+    },
+    {
+      "id": "weakening_curse",
+      "name": "Weakening Curse",
+      "side": "DUNGEON_MASTER",
+      "effect": "WEAKNESS",
+      "manaCost": 4,
+      "value": 5,
+      "description": "Reduce the attack of one hero.",
+      "temporary": true
     }
   ]
 }
