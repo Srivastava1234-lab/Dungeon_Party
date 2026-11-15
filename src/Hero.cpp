@@ -93,3 +93,37 @@ void Hero::addShield(int amount) {
 int Hero::getShield() const {
     return shield;
 }
+
+void Hero::armManaTrap(TrapEffect effect) {
+    if (!isAlive()) {
+        return;
+    }
+
+    manaTrapActive = true;
+    manaSpentForTrap = 0;
+    activeTrapEffect = effect;
+}
+
+std::optional<TrapEffect> Hero::recordManaSpentForTrap(int amount) {
+    if (!manaTrapActive || amount <= 0) {
+        return std::nullopt;
+    }
+
+    // Exactly 20 does not trigger the trap.
+    if (amount > 20 - manaSpentForTrap) {
+        TrapEffect triggeredEffect = activeTrapEffect;
+
+        clearManaTrap();
+
+        return triggeredEffect;
+    }
+
+    manaSpentForTrap += amount;
+
+    return std::nullopt;
+}
+
+void Hero::clearManaTrap() {
+    manaTrapActive = false;
+    manaSpentForTrap = 0;
+}

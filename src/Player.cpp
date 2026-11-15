@@ -112,9 +112,38 @@ void Player::playCard(const Card& card, const std::vector<Targetable*>& targets)
         for (auto* target : targets) card.applyEffect(*target);
     }
 
-    mana -= card.getManaCost();
+    int manaSpent = card.getManaCost();
+
+    mana -= manaSpent;
     cardsPlayedThisTurn++;
     discard(card);
+
+    // Only successful card plays count toward the trap.
+    if (hero != nullptr) {
+        std::optional<TrapEffect> triggeredTrap = hero->recordManaSpentForTrap(manaSpent);
+
+        if (triggeredTrap.has_value()) {
+            TrapEffect effect = triggeredTrap.value();
+
+            if (effect == TrapEffect::DAMAGE) {
+                hero->takeDamage(10);
+
+            } else if (effect == TrapEffect::DISCARD) {
+                if (!hand.empty()) {
+                    static std::mt19937 generator(std::random_device{}());
+
+                    std::uniform_int_distribution<std::size_t> pick(0, hand.size() - 1);
+
+                    std::size_t cardIndex = pick(generator);
+
+                    discard(*hand[cardIndex]);
+                }
+
+            } else if (effect == TrapEffect::MANA_DRAIN) {
+                mana = std::max(0, mana - 10);
+            }
+        }
+    }
 }
 
 const std::string& Player::getName() const {
