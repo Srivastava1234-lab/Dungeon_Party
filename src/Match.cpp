@@ -43,12 +43,18 @@ void Match::spawnBoss() {
 }
 
 void Match::start() {
-    if (started) throw std::logic_error("Match already started");
+    if (started){
+        throw std::logic_error("Match already started");
+    } 
     heroes.clear(); dm = nullptr;
     for (const auto& p : players) {
-        if (auto* h = dynamic_cast<Hero*>(p.get())) heroes.push_back(h);
+        if (auto* h = dynamic_cast<Hero*>(p.get())){
+            heroes.push_back(h);
+        } 
         if (auto* d = dynamic_cast<DungeonMaster*>(p.get())) {
-            if (dm) throw std::logic_error("Exactly one DM required");
+            if (dm){
+                throw std::logic_error("Exactly one DM required");
+            } 
             dm = d;
         }
     }
@@ -68,10 +74,12 @@ void Match::start() {
     activeHero = 0;
     phase = Phase::HERO_TURN;
 
+    addPublicLog("The match started.");
     beginTurn(*heroes.front());
 }
 
 void Match::beginTurn(Player& player) {
+    addPublicLog(player.getName() + "'s turn started.");
     player.refillMana();
     player.cardsPlayedThisTurn = 0;
 
@@ -200,46 +208,125 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     return fail("Attack requires a living monster in this match");
 }
 
-void Match::apply(const Card& c, Targetable& t) {
-    auto* p = getActivePlayer();
-    if (!p) {
+void Match::apply(const Card& card, Targetable& target) {
+    Player* player = getActivePlayer();
+
+    if (player == nullptr) {
         throw std::logic_error("No active player");
     }
-    auto check = validate(*p, c, t);
-    if (!check.valid){
+
+    CheckResult check = validate(*player, card, target);
+
+    if (!check.valid) {
         throw std::invalid_argument(check.reason.value());
-    } 
+    }
+
     std::vector<Targetable*> targets;
-    const auto* spell = dynamic_cast<const HeroCard*>(&c);
-    if (spell && spell->getEffect() == HeroEffect::SPELL &&
-        spell->getTarget() == SpellTarget::ALL_ENEMIES) {
-        for (const auto& monster : monsters) {
-            if (monster->isAlive()) targets.push_back(monster.get());
+
+    const HeroCard* heroCard = dynamic_cast<const HeroCard*>(&card);
+
+    if (heroCard != nullptr && heroCard->getEffect() == HeroEffect::SPELL && heroCard->getTarget() == SpellTarget::ALL_ENEMIES) {
+
+        for (std::size_t i = 0; i < monsters.size(); i++) {
+            if (monsters[i]->isAlive()) {
+                targets.push_back(monsters[i].get());
+            }
         }
     } else {
-        targets.push_back(&t);
+        targets.push_back(&target);
     }
-    p->playCard(c, targets);
+
+    // Prepare public messages, but don't publish them yet.
+    std::vector<std::string> messages;
+
+    if (heroCard != nullptr) {
+        HeroEffect effect = heroCard->getEffect();
+
+        for (std::size_t i = 0; i < targets.size(); i++) {
+            Hero* targetHero = dynamic_cast<Hero*>(targets[i]);
+            Monster* targetMonster = dynamic_cast<Monster*>(targets[i]);
+
+            if (effect == HeroEffect::HEAL && targetHero != nullptr) {
+                messages.push_back(player->getName() + " used healing on " + targetHero->getName() + ".");
+
+            } else if (effect == HeroEffect::SHIELD && targetHero != nullptr) {
+                messages.push_back(player->getName() + " shielded " + targetHero->getName() + ".");
+
+            } else if (targetMonster != nullptr && (effect == HeroEffect::ATTACK || effect == HeroEffect::SPELL || effect == HeroEffect::FIREBALL)) {
+                messages.push_back(player->getName() + " attacked " + targetMonster->getName() + ".");
+            }
+        }
+    }
+
+    player->playCard(card, targets);
+
+    // Publish only after the play succeeds.
+    for (std::size_t i = 0; i < messages.size(); i++) {
+        addPublicLog(messages[i]);
+    }
+
+    for (std::size_t i = 0; i < player->triggeredTrapMessages.size(); i++) {
+        addPublicLog(player->triggeredTrapMessages[i]);
+    }
+
+    player->triggeredTrapMessages.clear();
+
     checkWinner();
 }
 
 void Match::checkWinner() {
-    if (std::none_of(heroes.begin(), heroes.end(), [](const auto* h){ return h->isAlive(); })) {
-        winner = Side::DUNGEON_MASTER; return;
-    }
-    if (pendingBoss || finalBoss) {
-        if (finalBoss && !finalBoss->isAlive()) winner = Side::HEROES;
+    // Avoid recording the result more than once.
+    if (winner.has_value()) {
         return;
     }
-    bool hadBoss = false, livingBoss = false, livingMonster = false;
-    for (const auto& m : monsters) {
-        hadBoss = hadBoss || m->isBoss();
-        livingBoss = livingBoss || (m->isBoss() && m->isAlive());
-        livingMonster = livingMonster || m->isAlive();
+
+    bool livingHero = false;
+
+    for (std::size_t i = 0; i < heroes.size(); i++) {
+        if (heroes[i]->isAlive()) {
+            livingHero = true;
+            break;
+        }
     }
-    if ((hadBoss && !livingBoss) || !livingMonster){
+
+    if (!livingHero) {
+        winner = Side::DUNGEON_MASTER;
+        addPublicLog("The Dungeon Master wins.");
+        return;
+    }
+
+    // With a scheduled boss, heroes must defeat that boss.
+    if (pendingBoss || finalBoss) {
+        if (finalBoss != nullptr && !finalBoss->isAlive()) {
+            winner = Side::HEROES;
+            addPublicLog("The heroes win.");
+        }
+
+        return;
+    }
+
+    bool hadBoss = false;
+    bool livingBoss = false;
+    bool livingMonster = false;
+
+    for (std::size_t i = 0; i < monsters.size(); i++) {
+        if (monsters[i]->isBoss()) {
+            hadBoss = true;
+
+            if (monsters[i]->isAlive()) {
+                livingBoss = true;
+            }
+        }
+
+        if (monsters[i]->isAlive()) {
+            livingMonster = true;
+        }
+    }
+
+    if ((hadBoss && !livingBoss) || !livingMonster) {
         winner = Side::HEROES;
-    } 
+        addPublicLog("The heroes win.");
+    }
 }
 
 void Match::endTurn(Player& p) {
@@ -255,14 +342,31 @@ void Match::endTurn(Player& p) {
         }
 
         do { ++activeHero; } while (activeHero < heroes.size() && !heroes[activeHero]->isAlive());
-        if (activeHero < heroes.size()) beginTurn(*heroes[activeHero]);
-        else { phase = Phase::DM_TURN; beginTurn(*dm); }
+        if (activeHero < heroes.size()){
+            beginTurn(*heroes[activeHero]);
+        } 
+        else { 
+            phase = Phase::DM_TURN; beginTurn(*dm); 
+        }
     } else {
         phase = Phase::MONSTER_ACTIONS;
 
         // Apply Burn before monsters perform their queued attacks.
         for (std::size_t i = 0; i < monsters.size(); i++) {
-            monsters[i]->processBurn();
+            Monster* monster = monsters[i].get();
+            int healthBefore = monster->getHealth();
+
+            monster->processBurn();
+
+            int healthLost = healthBefore - monster->getHealth();
+
+            if (healthLost > 0) {
+                addPublicLog(monster->getName() + " lost " + std::to_string(healthLost) + " HP from Burn.");
+
+                if (!monster->isAlive()) {
+                    addPublicLog(monster->getName() + " was defeated.");
+                }
+            }
         }
 
         checkWinner();
@@ -283,8 +387,21 @@ void Match::endTurn(Player& p) {
 
             if (action.monster->skipFrozenAttack()) continue;
 
+            int healthBefore = action.target->getHealth();
+            int shieldBefore = action.target->getShield();
+
             action.monster->attack(*action.card, *action.target);
 
+            int healthLost = healthBefore - action.target->getHealth();
+            int shieldLost = shieldBefore - action.target->getShield();
+
+            addPublicLog(action.monster->getName() + " attacked " + action.target->getName() + ": " + std::to_string(healthLost) + " HP lost, " + std::to_string(shieldLost) + " shield absorbed.");
+
+            if (!action.target->isAlive()) {
+                addPublicLog(
+                action.target->getName() + " was defeated."
+                );
+            }  
             // Stop immediately if the attack ends the match.
             checkWinner();
 
@@ -301,11 +418,17 @@ void Match::endTurn(Player& p) {
              return;
         }
         if (round >= maxRounds) { 
-            winner = Side::DUNGEON_MASTER; return; 
+            winner = Side::DUNGEON_MASTER;
+            addPublicLog("The round limit was reached. The Dungeon Master wins.");
+
+            return;
         }
+
         phase = Phase::ROUND_START; ++round; activeHero = 0;
         spawnBoss();
-        while (!heroes[activeHero]->isAlive()) ++activeHero;
+        while (!heroes[activeHero]->isAlive()){
+             ++activeHero;
+        } 
         phase = Phase::HERO_TURN; beginTurn(*heroes[activeHero]);
     }
 }
@@ -437,4 +560,23 @@ void Match::queueMonsterAttack(DungeonMaster& player, Monster& monster, const Ca
     player.mana -= card.getManaCost();
     player.cardsPlayedThisTurn++;
     player.discard(card);
+}
+
+void Match::addPublicLog(const std::string& message) {
+    if (message.empty()) {
+        return;
+    }
+
+    actionLog.push_back(
+        "Round " + std::to_string(round) + ": " + message
+    );
+
+    // Keep only the latest 100 messages.
+    if (actionLog.size() > 100) {
+        actionLog.erase(actionLog.begin());
+    }
+}
+
+const std::vector<std::string>& Match::getActionLog() const {
+    return actionLog;
 }
