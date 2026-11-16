@@ -61,10 +61,8 @@ std::string readString(const json& message, const char* key) {
 
 // ===================== Setup =====================
 
-RoomServer::RoomServer(const GameData& data, std::uint16_t port, std::chrono::seconds grace)
-    : gameData(data), emptyRoomGrace(grace), rng(std::random_device{}()) {
-RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride)
-    : gameData(data), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
+RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride, std::chrono::seconds grace)
+    : gameData(data), emptyRoomGrace(grace), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
     ENetAddress address{};
     address.host = ENET_HOST_ANY; // listen on every network interface
     address.port = port;
@@ -242,6 +240,10 @@ void RoomServer::handleRejoin(ENetPeer* peer, const json& message) {
     peers[peer].roomCode = room.code;
     peers[peer].memberId = memberIt->id;
     peers[peer].wrongCodes = 0;
+    if (room.emptySince.has_value()) {
+        // The match was paused while everyone was gone: give the current turn a fresh timer.
+        room.timedTurn.clear();
+    }
     room.emptySince.reset();
 
     const bool hostConnected = std::any_of(room.members.begin(), room.members.end(),
@@ -473,7 +475,7 @@ void RoomServer::handlePlay(ENetPeer* peer, Room& room, Member& member, const js
     } catch (const std::exception& e) {
         return sendError(peer, e.what());
     }
-    broadcastState(room);
+    if (!endTurnIfAllCardsPlayed(room, *active)) broadcastState(room);
 }
 
 void RoomServer::handleEnd(ENetPeer* peer, Room& room, Member& member) {
@@ -520,7 +522,7 @@ void RoomServer::handleCommand(ENetPeer* peer, Room& room, Member& member, const
     } catch (const std::exception& e) {
         return sendError(peer, e.what());
     }
-    broadcastState(room);
+    if (!endTurnIfAllCardsPlayed(room, *dm)) broadcastState(room);
 }
 
 void RoomServer::handleBoss(ENetPeer* peer, Room& room, Member& member, const json& message) {
@@ -537,7 +539,7 @@ void RoomServer::handleBoss(ENetPeer* peer, Room& room, Member& member, const js
     } catch (const std::exception& e) {
         return sendError(peer, e.what());
     }
-    broadcastState(room);
+    if (!endTurnIfAllCardsPlayed(room, *dm)) broadcastState(room);
 }
 
 // The computer DM: every living monster attacks the weakest hero while there are cards and mana,
@@ -568,6 +570,33 @@ void RoomServer::playBotDungeonMaster(Match& match, DungeonMaster& dm) {
     if (match.canQueueBossAttack()) {
         if (Hero* target = weakestHero()) match.queueBossAttack(dm, *target);
     }
+}
+
+// ===================== Automatic turn end =====================
+
+// Once a player has played the maximum number of cards (rules.json: maxCardsPlayedPerTurn),
+// there is nothing left to do - so the turn ends right away instead of waiting for the timer.
+// The DM keeps the turn while the final boss could still be ordered (that order uses no card).
+// Returns true if the turn was ended (then the new state has already been sent).
+bool RoomServer::endTurnIfAllCardsPlayed(Room& room, Player& active) {
+    if (!room.match || room.match->isFinished() || room.match->getActivePlayer() != &active) return false;
+    const int limit = gameData.getRules().maxCardsPlayedPerTurn;
+    if (limit <= 0 || active.getCardsPlayedThisTurn() < limit) return false;
+    const bool isDm = dynamic_cast<DungeonMaster*>(&active) != nullptr;
+    if (isDm && room.match->canQueueBossAttack()) return false;
+
+    const std::string name = active.getName();
+    try {
+        room.match->endTurn(active); // exactly what the End turn button does
+    } catch (const std::exception& e) {
+        std::cerr << "Room " << room.code << ": could not end turn automatically: " << e.what() << "\n";
+        return false;
+    }
+    if (isDm) room.queued = json::array(); // the orders were carried out just now
+    skipBotAndAbsentTurns(room);
+    broadcastInfo(room, name + " played " + std::to_string(limit) + " cards - turn ended automatically");
+    broadcastState(room);
+    return true;
 }
 
 // ===================== Turn timer =====================
@@ -605,6 +634,7 @@ void RoomServer::endExpiredTurns() {
     const auto now = std::chrono::steady_clock::now();
     for (auto& [code, room] : rooms) {
         if (!room.match || room.turnSeconds <= 0 || room.timedTurn.empty() || now < room.turnDeadline) continue;
+        if (room.emptySince.has_value()) continue; // match paused while everyone reconnects (Taegan): don't run the clock
         Player* active = room.match->getActivePlayer();
         if (!active || room.match->isFinished()) continue;
 

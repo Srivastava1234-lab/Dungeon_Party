@@ -32,10 +32,14 @@
 class RoomServer {
 public:
     // Listens on all network interfaces on 'port'. Throws std::runtime_error if the port is taken.
-    RoomServer(const GameData& gameData, std::uint16_t port,
-               std::chrono::seconds emptyRoomGrace = std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS));
     // Turn time limits come from rules.json; 'turnSecondsOverride' > 0 replaces them for every
     // turn (used by the tests, and handy for a quick demo: dungeon_server 7777 <data> 15).
+    // 'emptyRoomGrace': how long an empty room waits for players to reconnect (Taegan).
+    RoomServer(const GameData& gameData, std::uint16_t port, int turnSecondsOverride = 0,
+               std::chrono::seconds emptyRoomGrace = std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS));
+    // Only a custom reconnect grace period (used by the reconnect tests)
+    RoomServer(const GameData& gameData, std::uint16_t port, std::chrono::seconds emptyRoomGrace)
+        : RoomServer(gameData, port, 0, emptyRoomGrace) {}
     ~RoomServer();
     RoomServer(const RoomServer&) = delete;
     RoomServer& operator=(const RoomServer&) = delete;
@@ -110,6 +114,7 @@ private:
     void skipBotAndAbsentTurns(Room& room);
 
     // Turn timer
+    bool endTurnIfAllCardsPlayed(Room& room, Player& active); // returns true if it ended the turn
     int turnLimitFor(const Player& player) const;  // seconds; 0 = no limit
     void restartTimerIfTurnChanged(Room& room);    // called before every state broadcast
     void endExpiredTurns();                        // called in every poll()

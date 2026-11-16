@@ -108,8 +108,11 @@ int main() {
         pump(server, all, [&] { return !host.lastOfType(net::msg::STATE).is_null() && !guest.lastOfType(net::msg::STATE).is_null(); });
         json hostState = host.lastOfType(net::msg::STATE);
         check(hostState["active"] == hostState["you"], "match starts on the host's turn");
-        check(hostState["turnSeconds"] == 60 && hostState["turnMsLeft"].get<int>() > 55000 &&
-              hostState["turnMsLeft"].get<int>() <= 60000, "turn timer uses the 60 seconds from rules.json");
+        // Read the limit from rules.json, so changing the timer there doesn't break this test.
+        const int heroLimit = data.getRules().heroTurnTimeLimitSeconds;
+        check(hostState["turnSeconds"] == heroLimit && hostState["turnMsLeft"].get<int>() > (heroLimit - 5) * 1000 &&
+              hostState["turnMsLeft"].get<int>() <= heroLimit * 1000,
+              "turn timer uses the hero limit from rules.json (" + std::to_string(heroLimit) + " s)");
         check(stranger.countOfType(net::msg::STATE) == 0, "other room receives nothing from this match");
         check(hostState["hand"].size() >= 1, "host sees their own hand");
         // Hidden information: each client's "hand" matches THEIR hero's hand size, never someone else's.
@@ -414,6 +417,34 @@ int main() {
             pump(graceServer, backList, [&] { return graceServer.roomCount() == 0; }, 3000);
             check(true, "empty active room closes after reconnect grace expires");
         }
+        // ===== Automatic turn end after the card limit (normal server: 30 s timer) =====
+        {
+            TestClient quick;
+            std::vector<TestClient*> q{&quick};
+            quick.net.connect("127.0.0.1", TEST_PORT);
+            pump(server, q, [&] { return quick.net.status() == NetClient::Status::Connected; });
+            quick.net.send({{"t", net::msg::CREATE}, {"name", "Quick"}});
+            pump(server, q, [&] { return !quick.lastOfType(net::msg::JOINED).is_null(); });
+            const std::string quickId = quick.lastOfType(net::msg::JOINED)["you"];
+            quick.net.send({{"t", net::msg::START}});
+            pump(server, q, [&] { return !quick.lastOfType(net::msg::STATE).is_null(); });
+            const int limit = data.getRules().maxCardsPlayedPerTurn;
+
+            for (int played = 1; played <= limit; ++played) {
+                quick.received.clear();
+                quick.net.send({{"t", net::msg::PLAY}, {"card", 0}, {"target", 0}, {"targetType", "monster"}});
+                pump(server, q, [&] { return !quick.lastOfType(net::msg::STATE).is_null() || !quick.lastOfType(net::msg::ERROR).is_null(); });
+                check(quick.lastOfType(net::msg::ERROR).is_null(), "card " + std::to_string(played) + " is accepted");
+                if (played < limit)
+                    check(quick.lastOfType(net::msg::STATE)["active"] == quickId && quick.lastOfType(net::msg::STATE)["round"] == 1,
+                          "after " + std::to_string(played) + " card(s) it is still the same turn");
+            }
+            // Only up to 3 s of waiting - far less than the 30 s timer, so the card limit ended the turn.
+            pump(server, q, [&] { auto st = quick.lastOfType(net::msg::STATE); return !st.is_null() && st["round"] == 2; });
+            check(quick.lastOfType(net::msg::INFO)["msg"] == "Quick played " + std::to_string(limit) + " cards - turn ended automatically",
+                  "after the last allowed card the turn ends at once (no waiting for the timer)");
+        }
+
         // ===== Turn timer (a second server where every turn lasts 1 second) =====
         RoomServer fastServer(data, TEST_PORT + 1, 1);
         TestClient slowHero, slowGuest, dmTimer, timerHero;
@@ -491,6 +522,36 @@ int main() {
         });
         check(timerHero.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < heroHp,
               "when the DM times out, the orders already given are still carried out");
+
+        // ===== Timer + reconnect (Taegan): a paused room must not lose turns =====
+        {
+            RoomServer pausedServer(data, TEST_PORT + 2, 1, std::chrono::seconds(10)); // 1 s turns, 10 s grace
+            TestClient leaver;
+            std::vector<TestClient*> one{&leaver};
+            leaver.net.connect("127.0.0.1", TEST_PORT + 2);
+            pump(pausedServer, one, [&] { return leaver.net.status() == NetClient::Status::Connected; });
+            leaver.net.send({{"t", net::msg::CREATE}, {"name", "Leaver"}});
+            pump(pausedServer, one, [&] { return !leaver.lastOfType(net::msg::JOINED).is_null(); });
+            const std::string pCode = leaver.lastOfType(net::msg::JOINED)["code"];
+            const std::string pToken = leaver.lastOfType(net::msg::JOINED)["token"];
+            leaver.net.send({{"t", net::msg::START}});
+            pump(pausedServer, one, [&] { return !leaver.lastOfType(net::msg::STATE).is_null(); });
+            const int roundBefore = leaver.lastOfType(net::msg::STATE)["round"];
+
+            leaver.net.disconnect(); // the room is now empty and paused
+            const auto pauseStart = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - pauseStart < std::chrono::milliseconds(2500)) pausedServer.poll(5);
+
+            TestClient back;
+            std::vector<TestClient*> backList{&back};
+            back.net.connect("127.0.0.1", TEST_PORT + 2);
+            pump(pausedServer, backList, [&] { return back.net.status() == NetClient::Status::Connected; });
+            back.net.send({{"t", net::msg::REJOIN}, {"code", pCode}, {"token", pToken}});
+            pump(pausedServer, backList, [&] { return !back.lastOfType(net::msg::STATE).is_null(); });
+            const json resumed = back.lastOfType(net::msg::STATE);
+            check(resumed["round"] == roundBefore, "turn timer does not run while the room is paused for reconnects");
+            check(resumed["turnMsLeft"].get<int>() > 500, "after rejoining, the turn gets a fresh timer");
+        }
 
         std::cout << "All network tests passed.\n";
         return 0;

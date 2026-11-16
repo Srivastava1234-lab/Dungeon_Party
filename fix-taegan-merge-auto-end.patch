@@ -1,0 +1,269 @@
+From a318059680b8924c44510de1292adec61c4de7fc Mon Sep 17 00:00:00 2001
+From: Akshat Srivastava <akshat.sanya@gmail.com>
+Date: Mon, 16 Nov 2026 19:37:33 +0000
+Subject: [PATCH] Fix build after merging full-net-and-reconnect; end turn
+ automatically after the card limit
+
+Merge fix
+- RoomServer: the merge kept BOTH constructors (Taegan's reconnect grace period and the
+  turn timer override) on top of each other, so the first one was never closed and the
+  whole file failed. Now one constructor takes both settings; a small delegating
+  constructor keeps Taegan's RoomServer(data, port, std::chrono::seconds) call working
+- server_main: the merge created the server twice - now once, with the turn time
+- Turn timer and reconnect pause: while a room is paused waiting for reconnects, the
+  turn timer no longer ends turns; on rejoin the current turn gets a fresh timer
+  (the grace period is 60 s but hero turns are 30 s, so the match kept moving)
+- Timer test reads the limit from rules.json instead of expecting 60 s
+
+New: automatic turn end
+- After a hero plays maxCardsPlayedPerTurn cards (rules.json, 3) the turn ends at once
+  instead of waiting for the timer; everyone is told via an info message
+- The DM's turn ends after 3 card orders too, unless the final boss can still be ordered
+  (that order uses no card)
+
+Tests: card limit ends the turn at once, 1-2 cards do not; timer paused during a
+reconnect pause and fresh after rejoin. Timer values in rules.json unchanged (30 / 45).
+---
+ server/RoomServer.cpp  | 44 +++++++++++++++++++++++-----
+ server/RoomServer.h    |  9 ++++--
+ server/server_main.cpp |  4 +--
+ tests/net_tests.cpp    | 65 ++++++++++++++++++++++++++++++++++++++++--
+ 4 files changed, 108 insertions(+), 14 deletions(-)
+
+diff --git a/server/RoomServer.cpp b/server/RoomServer.cpp
+index 28d2a9d..9572c08 100644
+--- a/server/RoomServer.cpp
++++ b/server/RoomServer.cpp
+@@ -61,10 +61,8 @@ std::string readString(const json& message, const char* key) {
+ 
+ // ===================== Setup =====================
+ 
+-RoomServer::RoomServer(const GameData& data, std::uint16_t port, std::chrono::seconds grace)
+-    : gameData(data), emptyRoomGrace(grace), rng(std::random_device{}()) {
+-RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride)
+-    : gameData(data), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
++RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride, std::chrono::seconds grace)
++    : gameData(data), emptyRoomGrace(grace), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
+     ENetAddress address{};
+     address.host = ENET_HOST_ANY; // listen on every network interface
+     address.port = port;
+@@ -242,6 +240,10 @@ void RoomServer::handleRejoin(ENetPeer* peer, const json& message) {
+     peers[peer].roomCode = room.code;
+     peers[peer].memberId = memberIt->id;
+     peers[peer].wrongCodes = 0;
++    if (room.emptySince.has_value()) {
++        // The match was paused while everyone was gone: give the current turn a fresh timer.
++        room.timedTurn.clear();
++    }
+     room.emptySince.reset();
+ 
+     const bool hostConnected = std::any_of(room.members.begin(), room.members.end(),
+@@ -473,7 +475,7 @@ void RoomServer::handlePlay(ENetPeer* peer, Room& room, Member& member, const js
+     } catch (const std::exception& e) {
+         return sendError(peer, e.what());
+     }
+-    broadcastState(room);
++    if (!endTurnIfAllCardsPlayed(room, *active)) broadcastState(room);
+ }
+ 
+ void RoomServer::handleEnd(ENetPeer* peer, Room& room, Member& member) {
+@@ -520,7 +522,7 @@ void RoomServer::handleCommand(ENetPeer* peer, Room& room, Member& member, const
+     } catch (const std::exception& e) {
+         return sendError(peer, e.what());
+     }
+-    broadcastState(room);
++    if (!endTurnIfAllCardsPlayed(room, *dm)) broadcastState(room);
+ }
+ 
+ void RoomServer::handleBoss(ENetPeer* peer, Room& room, Member& member, const json& message) {
+@@ -537,7 +539,7 @@ void RoomServer::handleBoss(ENetPeer* peer, Room& room, Member& member, const js
+     } catch (const std::exception& e) {
+         return sendError(peer, e.what());
+     }
+-    broadcastState(room);
++    if (!endTurnIfAllCardsPlayed(room, *dm)) broadcastState(room);
+ }
+ 
+ // The computer DM: every living monster attacks the weakest hero while there are cards and mana,
+@@ -570,6 +572,33 @@ void RoomServer::playBotDungeonMaster(Match& match, DungeonMaster& dm) {
+     }
+ }
+ 
++// ===================== Automatic turn end =====================
++
++// Once a player has played the maximum number of cards (rules.json: maxCardsPlayedPerTurn),
++// there is nothing left to do - so the turn ends right away instead of waiting for the timer.
++// The DM keeps the turn while the final boss could still be ordered (that order uses no card).
++// Returns true if the turn was ended (then the new state has already been sent).
++bool RoomServer::endTurnIfAllCardsPlayed(Room& room, Player& active) {
++    if (!room.match || room.match->isFinished() || room.match->getActivePlayer() != &active) return false;
++    const int limit = gameData.getRules().maxCardsPlayedPerTurn;
++    if (limit <= 0 || active.getCardsPlayedThisTurn() < limit) return false;
++    const bool isDm = dynamic_cast<DungeonMaster*>(&active) != nullptr;
++    if (isDm && room.match->canQueueBossAttack()) return false;
++
++    const std::string name = active.getName();
++    try {
++        room.match->endTurn(active); // exactly what the End turn button does
++    } catch (const std::exception& e) {
++        std::cerr << "Room " << room.code << ": could not end turn automatically: " << e.what() << "\n";
++        return false;
++    }
++    if (isDm) room.queued = json::array(); // the orders were carried out just now
++    skipBotAndAbsentTurns(room);
++    broadcastInfo(room, name + " played " + std::to_string(limit) + " cards - turn ended automatically");
++    broadcastState(room);
++    return true;
++}
++
+ // ===================== Turn timer =====================
+ 
+ int RoomServer::turnLimitFor(const Player& player) const {
+@@ -605,6 +634,7 @@ void RoomServer::endExpiredTurns() {
+     const auto now = std::chrono::steady_clock::now();
+     for (auto& [code, room] : rooms) {
+         if (!room.match || room.turnSeconds <= 0 || room.timedTurn.empty() || now < room.turnDeadline) continue;
++        if (room.emptySince.has_value()) continue; // match paused while everyone reconnects (Taegan): don't run the clock
+         Player* active = room.match->getActivePlayer();
+         if (!active || room.match->isFinished()) continue;
+ 
+diff --git a/server/RoomServer.h b/server/RoomServer.h
+index 5f24dcb..4fb563d 100644
+--- a/server/RoomServer.h
++++ b/server/RoomServer.h
+@@ -32,10 +32,14 @@
+ class RoomServer {
+ public:
+     // Listens on all network interfaces on 'port'. Throws std::runtime_error if the port is taken.
+-    RoomServer(const GameData& gameData, std::uint16_t port,
+-               std::chrono::seconds emptyRoomGrace = std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS));
+     // Turn time limits come from rules.json; 'turnSecondsOverride' > 0 replaces them for every
+     // turn (used by the tests, and handy for a quick demo: dungeon_server 7777 <data> 15).
++    // 'emptyRoomGrace': how long an empty room waits for players to reconnect (Taegan).
++    RoomServer(const GameData& gameData, std::uint16_t port, int turnSecondsOverride = 0,
++               std::chrono::seconds emptyRoomGrace = std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS));
++    // Only a custom reconnect grace period (used by the reconnect tests)
++    RoomServer(const GameData& gameData, std::uint16_t port, std::chrono::seconds emptyRoomGrace)
++        : RoomServer(gameData, port, 0, emptyRoomGrace) {}
+     ~RoomServer();
+     RoomServer(const RoomServer&) = delete;
+     RoomServer& operator=(const RoomServer&) = delete;
+@@ -110,6 +114,7 @@ private:
+     void skipBotAndAbsentTurns(Room& room);
+ 
+     // Turn timer
++    bool endTurnIfAllCardsPlayed(Room& room, Player& active); // returns true if it ended the turn
+     int turnLimitFor(const Player& player) const;  // seconds; 0 = no limit
+     void restartTimerIfTurnChanged(Room& room);    // called before every state broadcast
+     void endExpiredTurns();                        // called in every poll()
+diff --git a/server/server_main.cpp b/server/server_main.cpp
+index fa6e8c3..555387e 100644
+--- a/server/server_main.cpp
++++ b/server/server_main.cpp
+@@ -42,12 +42,10 @@ int main(int argc, char** argv) {
+ 
+     try {
+         GameData gameData(dataDir);
+-        RoomServer server(gameData, port);
++        RoomServer server(gameData, port, turnSeconds);
+         std::cout << "Dungeon Party server listening on UDP port " << port
+                   << " (protocol v" << net::PROTOCOL_VERSION
+                   << ", reconnect grace " << net::EMPTY_ROOM_GRACE_SECONDS << "s, Ctrl+C to stop)\n";
+-        RoomServer server(gameData, port, turnSeconds);
+-        std::cout << "Dungeon Party server listening on UDP port " << port << " (Ctrl+C to stop)\n";
+         if (turnSeconds > 0) std::cout << "Every turn lasts " << turnSeconds << " seconds\n";
+         while (running) server.poll(100);
+         std::cout << "Shutting down\n";
+diff --git a/tests/net_tests.cpp b/tests/net_tests.cpp
+index 536a071..56af2f8 100644
+--- a/tests/net_tests.cpp
++++ b/tests/net_tests.cpp
+@@ -108,8 +108,11 @@ int main() {
+         pump(server, all, [&] { return !host.lastOfType(net::msg::STATE).is_null() && !guest.lastOfType(net::msg::STATE).is_null(); });
+         json hostState = host.lastOfType(net::msg::STATE);
+         check(hostState["active"] == hostState["you"], "match starts on the host's turn");
+-        check(hostState["turnSeconds"] == 60 && hostState["turnMsLeft"].get<int>() > 55000 &&
+-              hostState["turnMsLeft"].get<int>() <= 60000, "turn timer uses the 60 seconds from rules.json");
++        // Read the limit from rules.json, so changing the timer there doesn't break this test.
++        const int heroLimit = data.getRules().heroTurnTimeLimitSeconds;
++        check(hostState["turnSeconds"] == heroLimit && hostState["turnMsLeft"].get<int>() > (heroLimit - 5) * 1000 &&
++              hostState["turnMsLeft"].get<int>() <= heroLimit * 1000,
++              "turn timer uses the hero limit from rules.json (" + std::to_string(heroLimit) + " s)");
+         check(stranger.countOfType(net::msg::STATE) == 0, "other room receives nothing from this match");
+         check(hostState["hand"].size() >= 1, "host sees their own hand");
+         // Hidden information: each client's "hand" matches THEIR hero's hand size, never someone else's.
+@@ -414,6 +417,34 @@ int main() {
+             pump(graceServer, backList, [&] { return graceServer.roomCount() == 0; }, 3000);
+             check(true, "empty active room closes after reconnect grace expires");
+         }
++        // ===== Automatic turn end after the card limit (normal server: 30 s timer) =====
++        {
++            TestClient quick;
++            std::vector<TestClient*> q{&quick};
++            quick.net.connect("127.0.0.1", TEST_PORT);
++            pump(server, q, [&] { return quick.net.status() == NetClient::Status::Connected; });
++            quick.net.send({{"t", net::msg::CREATE}, {"name", "Quick"}});
++            pump(server, q, [&] { return !quick.lastOfType(net::msg::JOINED).is_null(); });
++            const std::string quickId = quick.lastOfType(net::msg::JOINED)["you"];
++            quick.net.send({{"t", net::msg::START}});
++            pump(server, q, [&] { return !quick.lastOfType(net::msg::STATE).is_null(); });
++            const int limit = data.getRules().maxCardsPlayedPerTurn;
++
++            for (int played = 1; played <= limit; ++played) {
++                quick.received.clear();
++                quick.net.send({{"t", net::msg::PLAY}, {"card", 0}, {"target", 0}, {"targetType", "monster"}});
++                pump(server, q, [&] { return !quick.lastOfType(net::msg::STATE).is_null() || !quick.lastOfType(net::msg::ERROR).is_null(); });
++                check(quick.lastOfType(net::msg::ERROR).is_null(), "card " + std::to_string(played) + " is accepted");
++                if (played < limit)
++                    check(quick.lastOfType(net::msg::STATE)["active"] == quickId && quick.lastOfType(net::msg::STATE)["round"] == 1,
++                          "after " + std::to_string(played) + " card(s) it is still the same turn");
++            }
++            // Only up to 3 s of waiting - far less than the 30 s timer, so the card limit ended the turn.
++            pump(server, q, [&] { auto st = quick.lastOfType(net::msg::STATE); return !st.is_null() && st["round"] == 2; });
++            check(quick.lastOfType(net::msg::INFO)["msg"] == "Quick played " + std::to_string(limit) + " cards - turn ended automatically",
++                  "after the last allowed card the turn ends at once (no waiting for the timer)");
++        }
++
+         // ===== Turn timer (a second server where every turn lasts 1 second) =====
+         RoomServer fastServer(data, TEST_PORT + 1, 1);
+         TestClient slowHero, slowGuest, dmTimer, timerHero;
+@@ -492,6 +523,36 @@ int main() {
+         check(timerHero.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < heroHp,
+               "when the DM times out, the orders already given are still carried out");
+ 
++        // ===== Timer + reconnect (Taegan): a paused room must not lose turns =====
++        {
++            RoomServer pausedServer(data, TEST_PORT + 2, 1, std::chrono::seconds(10)); // 1 s turns, 10 s grace
++            TestClient leaver;
++            std::vector<TestClient*> one{&leaver};
++            leaver.net.connect("127.0.0.1", TEST_PORT + 2);
++            pump(pausedServer, one, [&] { return leaver.net.status() == NetClient::Status::Connected; });
++            leaver.net.send({{"t", net::msg::CREATE}, {"name", "Leaver"}});
++            pump(pausedServer, one, [&] { return !leaver.lastOfType(net::msg::JOINED).is_null(); });
++            const std::string pCode = leaver.lastOfType(net::msg::JOINED)["code"];
++            const std::string pToken = leaver.lastOfType(net::msg::JOINED)["token"];
++            leaver.net.send({{"t", net::msg::START}});
++            pump(pausedServer, one, [&] { return !leaver.lastOfType(net::msg::STATE).is_null(); });
++            const int roundBefore = leaver.lastOfType(net::msg::STATE)["round"];
++
++            leaver.net.disconnect(); // the room is now empty and paused
++            const auto pauseStart = std::chrono::steady_clock::now();
++            while (std::chrono::steady_clock::now() - pauseStart < std::chrono::milliseconds(2500)) pausedServer.poll(5);
++
++            TestClient back;
++            std::vector<TestClient*> backList{&back};
++            back.net.connect("127.0.0.1", TEST_PORT + 2);
++            pump(pausedServer, backList, [&] { return back.net.status() == NetClient::Status::Connected; });
++            back.net.send({{"t", net::msg::REJOIN}, {"code", pCode}, {"token", pToken}});
++            pump(pausedServer, backList, [&] { return !back.lastOfType(net::msg::STATE).is_null(); });
++            const json resumed = back.lastOfType(net::msg::STATE);
++            check(resumed["round"] == roundBefore, "turn timer does not run while the room is paused for reconnects");
++            check(resumed["turnMsLeft"].get<int>() > 500, "after rejoining, the turn gets a fresh timer");
++        }
++
+         std::cout << "All network tests passed.\n";
+         return 0;
+     } catch (const std::exception& e) {
+-- 
+2.43.0
+
