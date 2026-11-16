@@ -130,7 +130,7 @@ void drawNotice(const std::string& notice) {
     if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
 }
 
-// Help popup, opened with the Help_Button.png button on the start and menu screens.
+// Pop up windows: help in lobby, and about us in start. 
 void drawHelpPopup() {
     ImGui::SetNextWindowSize(ImVec2(560, 0));
     if (ImGui::BeginPopupModal("How to play", nullptr, ImGuiWindowFlags_NoResize)) {
@@ -147,6 +147,32 @@ void drawHelpPopup() {
         ImGui::BulletText("Dungeon Master: pick an attack card, click a monster, then the hero it\n"
                           "should attack. Orders happen when you press End turn.");
         ImGui::BulletText("The final boss arrives in a later round. Defeat it to win.");
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+void drawAboutPopup() {
+    ImGui::SetNextWindowSize(ImVec2(600, 0));
+    if (ImGui::BeginPopupModal("Who are we?", nullptr, ImGuiWindowFlags_NoResize)) {
+        ImGui::TextWrapped("We are a team of seven Computer Science students at Technische Hochschule Ulm (THU). "
+                   "We built Dungeon Party as our Software Project in the Winter Semester 2026/27, "
+                   "working with OpenUP and Scrum.");
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Team");
+        
+        ImGui::BulletText("Suat Keles - Artwork");
+        ImGui::BulletText("Irma Mejric - Product Owner");
+        ImGui::BulletText("Hülya Bal - Game Data & Testing");
+        ImGui::BulletText("Akshat Srivastava - Scrum Master");
+        ImGui::BulletText("Taegan Rosin - Software Architect");
+        ImGui::BulletText("Giray Kagan Angin - Backend Developer");
+        ImGui::BulletText("Soroush Sadeghi - Frontend / UI Developer");
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Supervisor: Prof. Dr. Klaus Baer");
+        ImGui::Spacing();
+        ImGui::TextWrapped("Dungeon Party: 3-6 heroes against one Dungeon Master, played over the network.");
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -355,7 +381,7 @@ int main() {
                 ImVec2(titlePos.x + 3, titlePos.y + 3), IM_COL32(0, 0, 0, 200), title);
             ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.45f, 1.0f), "%s", title);
             ImGui::PopFont();
-            
+
             ImGui::Dummy(ImVec2(0, 12));
             ImGui::SetWindowFontScale(1.5f);
             if (!dataErrorMessage.empty()) {
@@ -375,8 +401,10 @@ int main() {
                 }
                 ImGui::Dummy(ImVec2(0, 12));
                 if(ImGui::Button("About us", ImVec2(-1,50))){
-                ImGui::OpenPopup("Who are we?");
+                    ImGui::OpenPopup("Who are we?");
                 }
+                ImGui::SetWindowFontScale(1.0f);
+                drawAboutPopup();
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor(5);
             } 
