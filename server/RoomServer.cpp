@@ -61,8 +61,8 @@ std::string readString(const json& message, const char* key) {
 
 // ===================== Setup =====================
 
-RoomServer::RoomServer(const GameData& data, std::uint16_t port)
-    : gameData(data), rng(std::random_device{}()) {
+RoomServer::RoomServer(const GameData& data, std::uint16_t port, std::chrono::seconds grace)
+    : gameData(data), emptyRoomGrace(grace), rng(std::random_device{}()) {
     ENetAddress address{};
     address.host = ENET_HOST_ANY; // listen on every network interface
     address.port = port;
@@ -82,7 +82,7 @@ void RoomServer::poll(std::uint32_t timeoutMs) {
     while (enet_host_service(host, &event, timeoutMs) > 0) {
         timeoutMs = 0;
         switch (event.type) {
-            case ENET_EVENT_TYPE_CONNECT: onConnect(event.peer); break;
+            case ENET_EVENT_TYPE_CONNECT: onConnect(event.peer, event.data); break;
             case ENET_EVENT_TYPE_DISCONNECT: onDisconnect(event.peer); break;
             case ENET_EVENT_TYPE_RECEIVE:
                 onPacket(event.peer, event.packet);
@@ -91,23 +91,33 @@ void RoomServer::poll(std::uint32_t timeoutMs) {
             default: break;
         }
     }
+    pruneExpiredRooms();
     enet_host_flush(host);
 }
 
 // ===================== ENet events =====================
 
-void RoomServer::onConnect(ENetPeer* peer) {
+void RoomServer::onConnect(ENetPeer* peer, enet_uint32 protocolVersion) {
+    if (protocolVersion != static_cast<enet_uint32>(net::PROTOCOL_VERSION)) {
+        sendError(peer, "Client version mismatch (server expects protocol v" +
+                        std::to_string(net::PROTOCOL_VERSION) + "). Please update your game.");
+        enet_peer_disconnect_later(peer, 0);
+        return;
+    }
     peers[peer] = PeerInfo{};
-    // Drop peers that stop answering instead of waiting the ENet default of ~30 seconds.
+    // Keep NAT mappings alive and drop peers that stop answering sooner than ENet's ~30s default.
+    enet_peer_ping_interval(peer, 1000);
     enet_peer_timeout(peer, 0, 5000, 10000);
 }
 
 void RoomServer::onDisconnect(ENetPeer* peer) {
-    leaveRoom(peer);
+    leaveRoom(peer, false);
     peers.erase(peer);
 }
 
 void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
+    if (peers.find(peer) == peers.end()) return; // rejected during handshake (e.g. version mismatch)
+
     // Never trust client data: parse without exceptions and check the shape.
     const json message = json::parse(packet->data, packet->data + packet->dataLength, nullptr, false);
     if (message.is_discarded() || !message.is_object()) {
@@ -118,7 +128,8 @@ void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
 
     if (type == net::msg::CREATE) return handleCreate(peer, message);
     if (type == net::msg::JOIN) return handleJoin(peer, message);
-    if (type == net::msg::LEAVE) return leaveRoom(peer);
+    if (type == net::msg::REJOIN) return handleRejoin(peer, message);
+    if (type == net::msg::LEAVE) return leaveRoom(peer, true);
 
     // Everything else only makes sense inside a room - and only acts on THAT room.
     Room* room = roomOf(peer);
@@ -141,7 +152,8 @@ void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
 
     Room room;
     room.code = newRoomCode();
-    Member host{peer, "p" + std::to_string(room.nextMemberNumber++), net::sanitizeName(readString(message, "name")), ""};
+    Member host{peer, "p" + std::to_string(room.nextMemberNumber++),
+                net::sanitizeName(readString(message, "name")), "", net::generateReconnectToken(rng)};
     room.hostId = host.id;
     room.members.push_back(host);
 
@@ -151,7 +163,7 @@ void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
     rooms.emplace(code, std::move(room));
 
     std::cout << "Room " << code << " created by " << host.name << "\n";
-    send(peer, {{"t", net::msg::JOINED}, {"code", code}, {"you", host.id}});
+    send(peer, {{"t", net::msg::JOINED}, {"code", code}, {"you", host.id}, {"token", host.token}});
     broadcastLobby(rooms.at(code));
 }
 
@@ -175,17 +187,77 @@ void RoomServer::handleJoin(ENetPeer* peer, const json& message) {
     if (room.match) return sendError(peer, "That match has already started");
     if (room.members.size() >= net::MAX_PLAYERS_PER_ROOM) return sendError(peer, "That room is full");
 
-    Member member{peer, "p" + std::to_string(room.nextMemberNumber++), net::sanitizeName(readString(message, "name")), ""};
+    Member member{peer, "p" + std::to_string(room.nextMemberNumber++),
+                  net::sanitizeName(readString(message, "name")), "", net::generateReconnectToken(rng)};
     room.members.push_back(member);
     peers[peer].roomCode = room.code;
     peers[peer].memberId = member.id;
 
     std::cout << member.name << " joined room " << room.code << "\n";
-    send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", member.id}});
+    send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", member.id}, {"token", member.token}});
     broadcastLobby(room);
 }
 
-void RoomServer::leaveRoom(ENetPeer* peer) {
+void RoomServer::handleRejoin(ENetPeer* peer, const json& message) {
+    if (roomOf(peer)) return sendError(peer, "You are already in a room");
+
+    const std::string code = net::normalizeRoomCode(readString(message, "code"));
+    const std::string token = readString(message, "token");
+    auto roomIt = rooms.find(code);
+    if (roomIt == rooms.end()) {
+        if (++peers[peer].wrongCodes >= net::MAX_WRONG_CODES) {
+            sendError(peer, "Too many wrong room codes");
+            enet_peer_disconnect_later(peer, 0);
+        } else {
+            sendError(peer, "Room not found or closed");
+        }
+        return;
+    }
+
+    Room& room = roomIt->second;
+    auto memberIt = std::find_if(room.members.begin(), room.members.end(),
+                                 [&](const Member& m) { return !m.token.empty() && m.token == token; });
+    if (memberIt == room.members.end()) {
+        if (++peers[peer].wrongCodes >= net::MAX_WRONG_CODES) {
+            sendError(peer, "Too many invalid rejoin attempts");
+            enet_peer_disconnect_later(peer, 0);
+        } else {
+            sendError(peer, "Could not rejoin that room");
+        }
+        return;
+    }
+
+    // If the old socket hasn't timed out yet, detach it silently so its later cleanup cannot touch the new peer.
+    if (memberIt->peer && memberIt->peer != peer) {
+        ENetPeer* oldPeer = memberIt->peer;
+        memberIt->peer = nullptr;
+        peers.erase(oldPeer);
+        enet_peer_reset(oldPeer);
+    }
+
+    memberIt->peer = peer;
+    peers[peer].roomCode = room.code;
+    peers[peer].memberId = memberIt->id;
+    peers[peer].wrongCodes = 0;
+    room.emptySince.reset();
+
+    const bool hostConnected = std::any_of(room.members.begin(), room.members.end(),
+                                           [&](const Member& m) { return m.id == room.hostId && m.peer != nullptr; });
+    if (!hostConnected) room.hostId = memberIt->id;
+
+    std::cout << memberIt->name << " rejoined room " << room.code << "\n";
+    send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", memberIt->id},
+                {"token", memberIt->token}, {"rejoined", true}});
+
+    if (room.match) {
+        skipBotAndAbsentTurns(room);
+        broadcastState(room);
+    } else {
+        broadcastLobby(room);
+    }
+}
+
+void RoomServer::leaveRoom(ENetPeer* peer, bool explicitLeave) {
     Room* room = roomOf(peer);
     auto peerIt = peers.find(peer);
     if (peerIt != peers.end()) {
@@ -199,18 +271,27 @@ void RoomServer::leaveRoom(ENetPeer* peer) {
     if (memberIt == room->members.end()) return;
 
     if (room->match) {
-        // During a match the hero stays in the game; their turns are skipped from now on.
+        // During a match the hero stays in the game; their turns are skipped until they rejoin.
         memberIt->peer = nullptr;
+        if (explicitLeave) memberIt->token.clear();
     } else {
         room->members.erase(memberIt);
     }
 
     const bool anyoneConnected = std::any_of(room->members.begin(), room->members.end(),
                                              [](const Member& m) { return m.peer != nullptr; });
+    const bool anyoneCanRejoin = std::any_of(room->members.begin(), room->members.end(),
+                                             [](const Member& m) { return !m.token.empty(); });
     if (!anyoneConnected) {
-        const std::string code = room->code; // copy: erasing by a reference into the erased element is unsafe
-        std::cout << "Room " << code << " closed (empty)\n";
-        rooms.erase(code);
+        if (!room->match || !anyoneCanRejoin || emptyRoomGrace.count() <= 0) {
+            const std::string code = room->code; // copy: erasing by a reference into the erased element is unsafe
+            std::cout << "Room " << code << " closed (empty)\n";
+            rooms.erase(code);
+        } else if (!room->emptySince.has_value()) {
+            room->emptySince = std::chrono::steady_clock::now();
+            std::cout << "Room " << room->code << " paused (waiting up to "
+                      << emptyRoomGrace.count() << "s for reconnect)\n";
+        }
         return;
     }
 
@@ -227,6 +308,19 @@ void RoomServer::leaveRoom(ENetPeer* peer) {
         broadcastState(*room);
     } else {
         broadcastLobby(*room);
+    }
+}
+
+void RoomServer::pruneExpiredRooms() {
+    if (emptyRoomGrace.count() <= 0) return;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = rooms.begin(); it != rooms.end();) {
+        if (it->second.emptySince.has_value() && now - *it->second.emptySince >= emptyRoomGrace) {
+            std::cout << "Room " << it->first << " closed (reconnect grace expired)\n";
+            it = rooms.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
@@ -328,8 +422,12 @@ std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
 
 // Ends turns that nobody at a keyboard can take: the bot DM, and heroes whose player left.
 void RoomServer::skipBotAndAbsentTurns(Room& room) {
-    if (!room.match) return;
+    if (!room.match || room.match->isFinished()) return;
+    const bool anyoneConnected = std::any_of(room.members.begin(), room.members.end(),
+                                             [](const Member& m) { return m.peer != nullptr; });
+    if (!anyoneConnected) return; // pause the match until someone reconnects
     for (int guard = 0; guard < 64; ++guard) { // guard: never loop forever on a logic bug
+        if (room.match->isFinished()) return;
         Player* active = room.match->getActivePlayer();
         if (!active) return;
         bool humanCanPlay = false;
@@ -387,7 +485,7 @@ void RoomServer::handleEnd(ENetPeer* peer, Room& room, Member& member) {
     broadcastState(room);
 }
 
-// ---- Dungeon Master
+// Dungeon Master
 
 DungeonMaster* RoomServer::activeDungeonMaster(Room& room, const Member& member) {
     if (!room.match) return nullptr;

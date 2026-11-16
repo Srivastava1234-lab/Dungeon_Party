@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 
 #include "EnetLibrary.h"
+#include "Protocol.h"
 
 class NetClient {
 public:
@@ -27,7 +28,8 @@ public:
 
     // Starts connecting (returns immediately). 'serverAddress' is an IP or a domain name.
     // Returns false if the address can't be resolved; see lastError().
-    bool connect(const std::string& serverAddress, std::uint16_t port);
+    bool connect(const std::string& serverAddress, std::uint16_t port,
+                 int protocolVersion = net::PROTOCOL_VERSION);
     void disconnect();
 
     // Handles network events without waiting. Call once per frame.

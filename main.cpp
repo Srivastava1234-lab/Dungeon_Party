@@ -11,10 +11,13 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -132,15 +135,17 @@ void drawNotice(const std::string& notice) {
 
 // Help popup, opened with the Help_Button.png button on the start and menu screens.
 void drawHelpPopup() {
-    ImGui::SetNextWindowSize(ImVec2(560, 0));
+    ImGui::SetNextWindowSize(ImVec2(580, 0));
     if (ImGui::BeginPopupModal("How to play", nullptr, ImGuiWindowFlags_NoResize)) {
-        ImGui::TextWrapped("Hosting");
-        ImGui::BulletText("This computer: the game runs the server itself. Friends on the SAME\n"
+        ImGui::TextWrapped("Hosting & Connecting");
+        ImGui::BulletText("This computer: runs the server inside the game. Friends on the SAME\n"
                           "network join with the address shown in your lobby.");
-        ImGui::BulletText("A server: enter the address of a computer running dungeon_server\n"
-                          "(for example the team laptop). Use this to play across different networks.");
-        ImGui::BulletText("Different networks only work if that server is reachable: port\n"
-                          "forwarding of UDP 7777 on its router, or everyone in the same Tailscale network.");
+        ImGui::BulletText("A server (different networks): connect to a running dungeon_server\n"
+                          "(e.g. on a cloud VM, or forwarded via playit.gg / Tailscale).");
+        ImGui::BulletText("You can enter host:port (for example myserver.ply.gg:12345)\n"
+                          "directly in the Server address box.");
+        ImGui::BulletText("If your connection drops mid-match, the game automatically\n"
+                          "reconnects you to your seat.");
         ImGui::Spacing();
         ImGui::TextWrapped("Playing");
         ImGui::BulletText("Heroes: pick a card, then click a monster (or a hero for Heal).");
@@ -228,20 +233,77 @@ int main() {
     };
 
     // ---- Network state
+    struct ReconnectSession {
+        std::string address;
+        std::uint16_t port = net::DEFAULT_PORT;
+        std::string roomCode;
+        std::string token;
+        std::string playerName;
+        bool valid() const { return !address.empty() && !roomCode.empty() && !token.empty(); }
+        void clear() { address.clear(); port = net::DEFAULT_PORT; roomCode.clear(); token.clear(); playerName.clear(); }
+    };
+
+    const std::filesystem::path sessionFile = std::filesystem::temp_directory_path() / "dungeon_party_session.json";
+    auto saveSessionToDisk = [&](const ReconnectSession& s) {
+        if (!s.valid()) return;
+        std::ofstream out(sessionFile, std::ios::trunc);
+        if (!out) return;
+        out << json{{"address", s.address}, {"port", s.port}, {"code", s.roomCode},
+                    {"token", s.token}, {"name", s.playerName}}.dump();
+    };
+    auto clearSessionFromDisk = [&]() {
+        std::error_code ec;
+        std::filesystem::remove(sessionFile, ec);
+    };
+    auto loadSessionFromDisk = [&]() -> ReconnectSession {
+        ReconnectSession s;
+        std::ifstream in(sessionFile);
+        if (!in) return s;
+        json data = json::parse(in, nullptr, false);
+        if (!data.is_object()) return s;
+        s.address = strOr(data, "address");
+        s.port = static_cast<std::uint16_t>(std::clamp(intOr(data, "port", net::DEFAULT_PORT), 1, 65535));
+        s.roomCode = strOr(data, "code");
+        s.token = strOr(data, "token");
+        s.playerName = strOr(data, "name");
+        return s;
+    };
+
     std::unique_ptr<RoomServer> localServer; // only created when this player hosts on this computer
     NetClient client;
     OnlineScreen screen = OnlineScreen::Start;
-    json pendingRequest;  // "create" or "join", sent as soon as the connection is up
+    json pendingRequest;  // "create", "join", or "rejoin", sent as soon as the connection is up
     std::string notice;   // last error / info line shown to the player
     std::string roomCode, myId, hostId;
     json lobbyPlayers = json::array();
     json state;           // latest match state from the server
     const std::string localAddress = client.localNetworkAddress();
 
+    ReconnectSession activeSession; // current room (kept on unexpected drop for auto-reconnect)
+    ReconnectSession savedSession = loadSessionFromDisk(); // recovered if the app restarted mid-match
+    bool reconnecting = false;
+    int reconnectAttempts = 0;
+    constexpr int MAX_RECONNECT_ATTEMPTS = 10;
+    bool rejoinSentThisAttempt = false;
+    std::chrono::steady_clock::time_point nextReconnectAttempt{};
+
+    std::string defaultServer;
+    if (const char* envServer = std::getenv("DUNGEON_PARTY_SERVER")) defaultServer = net::trimWhitespace(envServer);
+#ifdef DUNGEON_PARTY_DEFAULT_SERVER
+    if (defaultServer.empty()) defaultServer = net::trimWhitespace(DUNGEON_PARTY_DEFAULT_SERVER);
+#endif
+
     char nameBuf[net::MAX_NAME_LENGTH + 1] = "Player";
-    char serverBuf[128] = "";       // address to JOIN
+    if (!savedSession.playerName.empty()) {
+        std::snprintf(nameBuf, sizeof(nameBuf), "%s", savedSession.playerName.c_str());
+    }
+    char serverBuf[128] = "";       // address to JOIN (supports host or host:port)
     char hostServerBuf[128] = "";   // address of a dedicated server to HOST on
-    int hostWhere = 0;              // 0 = this computer, 1 = a server
+    if (!defaultServer.empty()) {
+        std::snprintf(serverBuf, sizeof(serverBuf), "%s", defaultServer.c_str());
+        std::snprintf(hostServerBuf, sizeof(hostServerBuf), "%s", defaultServer.c_str());
+    }
+    int hostWhere = defaultServer.empty() ? 0 : 1; // 0 = this computer, 1 = a server
     int port = net::DEFAULT_PORT;
     char codeBuf[16] = "";
 
@@ -249,7 +311,7 @@ int main() {
     int selectedCard = -1;     // hand index
     int selectedMonster = -1;  // DM: the monster that will attack
     bool bossOrder = false;    // DM: choosing a target for the final boss
-    std::string lastActive;            // whose turn it was in the last state (to notice a new turn)
+    std::string lastActive;    // whose turn it was in the last state (to notice a new turn)
 
     auto clearSelection = [&] {
         selectedCard = -1;
@@ -257,22 +319,48 @@ int main() {
         bossOrder = false;
     };
 
-    auto backToMenu = [&](const std::string& why) {
+    auto backToMenu = [&](const std::string& why, bool keepSavedSession = false) {
         client.disconnect();
         screen = OnlineScreen::Menu;
         notice = why;
         roomCode.clear(); myId.clear(); hostId.clear();
         state = nullptr;
+        pendingRequest = nullptr;
+        reconnecting = false;
+        reconnectAttempts = 0;
+        rejoinSentThisAttempt = false;
+        if (!keepSavedSession) {
+            savedSession.clear();
+            clearSessionFromDisk();
+        }
+        activeSession.clear();
         clearSelection();
         lastActive.clear();
     };
 
-    auto startConnecting = [&](const std::string& address, json request) {
+    auto leaveAndBackToMenu = [&](const std::string& why) {
+        if (client.status() == NetClient::Status::Connected) {
+            client.send({{"t", net::msg::LEAVE}});
+        }
+        backToMenu(why, false);
+    };
+
+    auto startConnecting = [&](const std::string& rawAddress, json request) {
         notice.clear();
-        if (!client.connect(address, static_cast<std::uint16_t>(port))) {
+        const auto fallbackPort = static_cast<std::uint16_t>(std::clamp(port, 1, 65535));
+        net::ServerEndpoint endpoint = net::parseServerEndpoint(rawAddress, fallbackPort);
+        const std::string resolvedHost = isThisComputer(endpoint.host) ? "127.0.0.1" : endpoint.host;
+        if (!client.connect(resolvedHost, endpoint.port)) {
             notice = client.lastError();
             return;
         }
+        activeSession.clear();
+        activeSession.address = resolvedHost;
+        activeSession.port = endpoint.port;
+        activeSession.playerName = nameBuf;
+        reconnecting = false;
+        reconnectAttempts = 0;
+        rejoinSentThisAttempt = false;
         pendingRequest = std::move(request);
         screen = OnlineScreen::Connecting;
     };
@@ -285,21 +373,50 @@ int main() {
 
         // ---- 2. Network client: once per frame, never blocks
         client.poll();
-        if (screen != OnlineScreen::Start && screen != OnlineScreen::Menu &&
-            client.status() == NetClient::Status::Disconnected) {
-            backToMenu(client.lastError().empty() ? "Disconnected" : client.lastError());
-        }
         if (screen == OnlineScreen::Connecting && client.status() == NetClient::Status::Connected &&
             !pendingRequest.is_null()) {
             client.send(pendingRequest);
             pendingRequest = nullptr;
         }
+
+        if (reconnecting) {
+            const auto now = std::chrono::steady_clock::now();
+            if (client.status() == NetClient::Status::Connected && !rejoinSentThisAttempt) {
+                if (state.is_object()) {
+                    // match already started, reclaim our seat with the token
+                    client.send({{"t", net::msg::REJOIN}, {"code", activeSession.roomCode}, {"token", activeSession.token}});
+                } else {
+                    // still in the lobby, join the room again by code
+                    client.send({{"t", net::msg::JOIN}, {"name", activeSession.playerName}, {"code", activeSession.roomCode}});
+                }
+                rejoinSentThisAttempt = true;
+            } else if (client.status() == NetClient::Status::Disconnected && now >= nextReconnectAttempt) {
+                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                    savedSession = activeSession;
+                    backToMenu("Lost connection. Click Reconnect to try again.", true);
+                } else {
+                    ++reconnectAttempts;
+                    rejoinSentThisAttempt = false;
+                    nextReconnectAttempt = now + std::chrono::seconds(2);
+                    client.connect(activeSession.address, activeSession.port);
+                }
+            }
+        }
+
+        bool closedByServer = false;
         for (const json& message : client.takeMessages()) {
             const std::string type = strOr(message, "t");
             if (type == net::msg::JOINED) {
                 roomCode = strOr(message, "code");
                 myId = strOr(message, "you");
-                screen = OnlineScreen::Lobby;
+                activeSession.roomCode = roomCode;
+                activeSession.token = strOr(message, "token", activeSession.token);
+                if (!localServer) saveSessionToDisk(activeSession);
+                savedSession.clear();
+                reconnecting = false;
+                reconnectAttempts = 0;
+                rejoinSentThisAttempt = false;
+                if (screen == OnlineScreen::Connecting) screen = OnlineScreen::Lobby;
                 notice.clear();
             } else if (type == net::msg::LOBBY) {
                 roomCode = strOr(message, "code", roomCode);
@@ -310,6 +427,7 @@ int main() {
                 state = message;
                 hostId = strOr(message, "host", hostId);
                 screen = OnlineScreen::Battle;
+                if (!state["winner"].is_null()) clearSessionFromDisk(); // finished match needs no reconnect
                 const std::string active = message["active"].is_string() ? message["active"].get<std::string>() : "";
                 if (active != lastActive) { // a new turn started: forget the old selection
                     lastActive = active;
@@ -318,9 +436,29 @@ int main() {
                 }
             } else if (type == net::msg::ERROR) {
                 notice = strOr(message, "msg");
-                if (screen == OnlineScreen::Connecting) backToMenu(notice);
+                if (reconnecting) {
+                    // room gone or token rejected, stop retrying
+                    closedByServer = true;
+                    backToMenu(notice, false);
+                } else if (screen == OnlineScreen::Connecting) {
+                    closedByServer = true;
+                    backToMenu(notice, false);
+                }
             } else if (type == net::msg::CLOSED) {
-                backToMenu(strOr(message, "msg", "The room was closed"));
+                closedByServer = true;
+                backToMenu(strOr(message, "msg", "The room was closed"), false);
+            }
+        }
+
+        if (!closedByServer && !reconnecting && screen != OnlineScreen::Start && screen != OnlineScreen::Menu &&
+            client.status() == NetClient::Status::Disconnected) {
+            if ((screen == OnlineScreen::Lobby || screen == OnlineScreen::Battle) && activeSession.valid()) {
+                reconnecting = true;
+                reconnectAttempts = 0;
+                rejoinSentThisAttempt = false;
+                nextReconnectAttempt = std::chrono::steady_clock::now();
+            } else {
+                backToMenu(client.lastError().empty() ? "Disconnected" : client.lastError(), false);
             }
         }
 
@@ -360,8 +498,8 @@ int main() {
                 ImGui::SetNextWindowPos(ImVec2(win.x * 0.5f, win.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
                 ImGui::SetNextWindowSize(ImVec2(420, 110));
                 ImGui::Begin("Connecting", nullptr, fixedFlags);
-                ImGui::TextUnformatted("Connecting ...");
-                if (ImGui::Button("Cancel", ImVec2(-1, 0))) backToMenu("");
+                ImGui::Text("Connecting to %s:%u ...", activeSession.address.c_str(), activeSession.port);
+                if (ImGui::Button("Cancel", ImVec2(-1, 0))) backToMenu("", false);
                 ImGui::End();
             } else {
                 ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -394,7 +532,7 @@ int main() {
 
                 // The two panels sit inside the empty parchment scrolls of Menu_Background_AI_Generated.png
                 const float panelW = win.x * 0.235f;
-                const float panelH = win.y * 0.40f;
+                const float panelH = win.y * 0.43f;
                 ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.85f, 0.70f, 0.40f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.80f, 0.50f, 1.0f));
@@ -411,19 +549,19 @@ int main() {
                 ImGui::RadioButton("A server", &hostWhere, 1);
                 if (hostWhere == 1) {
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::InputTextWithHint("##hostserver", "Server address", hostServerBuf, sizeof(hostServerBuf));
+                    ImGui::InputTextWithHint("##hostserver", "Server host[:port]", hostServerBuf, sizeof(hostServerBuf));
                 } else {
-                    ImGui::TextWrapped("Other networks need port forwarding (see ?).");
+                    ImGui::TextWrapped("Same network only unless forwarded (see ?).");
                 }
                 ImGui::BeginDisabled(!nameFilled);
                 if (ImGui::Button("New Adventure", ImVec2(-1, 44))) {
                     const json create = {{"t", net::msg::CREATE}, {"name", nameBuf}};
-                    if (hostWhere == 1 && !isThisComputer(hostServerBuf)) {
+                    if (hostWhere == 1 && !isThisComputer(net::trimWhitespace(hostServerBuf))) {
                         startConnecting(hostServerBuf, create); // a dedicated dungeon_server somewhere else
                     } else {
                         if (!localServer && gameData) {
                             try {
-                                localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(port));
+                                localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(std::clamp(port, 1, 65535)));
                             } catch (const std::exception& e) {
                                 // Port already taken (e.g. another window on this computer is hosting):
                                 // we can still create a room on that server.
@@ -440,19 +578,28 @@ int main() {
                 ImGui::SetCursorPos(ImVec2(win.x * 0.71f, win.y * 0.35f));
                 ImGui::BeginChild("Join", ImVec2(panelW, panelH), true, ImGuiWindowFlags_NoBackground);
                 ImGui::TextUnformatted("JOIN A PARTY");
-                ImGui::TextWrapped("Enter the server address and the code you got from the host:");
+                ImGui::TextWrapped("Enter the server address and room code:");
                 ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##joinserver", "Server address", serverBuf, sizeof(serverBuf));
+                ImGui::InputTextWithHint("##joinserver", "Server host[:port]", serverBuf, sizeof(serverBuf));
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputInt("##port", &port);
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextWithHint("##code", "Room code", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
                 ImGui::BeginDisabled(!nameFilled);
                 if (ImGui::Button("Join", ImVec2(-1, 44))) {
-                    const std::string address = isThisComputer(serverBuf) ? "127.0.0.1" : serverBuf;
-                    startConnecting(address, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
+                    startConnecting(serverBuf, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
                 }
                 ImGui::EndDisabled();
+                if (savedSession.valid()) {
+                    ImGui::Spacing();
+                    if (ImGui::Button(("Reconnect to " + savedSession.roomCode).c_str(), ImVec2(-1, 36))) {
+                        const auto sessionCopy = savedSession;
+                        startConnecting(sessionCopy.address + ":" + std::to_string(sessionCopy.port),
+                                        {{"t", net::msg::REJOIN}, {"code", sessionCopy.roomCode}, {"token", sessionCopy.token}});
+                        activeSession = sessionCopy;
+                        savedSession = sessionCopy;
+                    }
+                }
                 ImGui::EndChild();
 
                 ImGui::PopStyleColor(6); // every pushed color must be popped
@@ -516,7 +663,7 @@ int main() {
             } else {
                 ImGui::TextUnformatted("Waiting for the host to start...");
             }
-            if (ImGui::Button("Leave", ImVec2(100, 32))) backToMenu("");
+            if (ImGui::Button("Leave", ImVec2(100, 32))) leaveAndBackToMenu("");
             drawNotice(notice);
             ImGui::End();
         }
@@ -546,13 +693,15 @@ int main() {
                 if (ImGui::Button("End turn")) { client.send({{"t", net::msg::END}}); clearSelection(); }
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("| DM: %s%s", strOr(dm, "name").c_str(), iAmDm ? " (you)" : "");
+            const bool dmOffline = boolOr(dm, "human", false) && !boolOr(dm, "connected", true);
+            ImGui::TextDisabled("| DM: %s%s%s", strOr(dm, "name").c_str(), iAmDm ? " (you)" : "",
+                                dmOffline ? " [offline]" : "");
             if (iAmDm && dm.contains("mana")) {
                 ImGui::SameLine();
                 ImGui::Text("Mana %d/%d | Deck %d", intOr(dm, "mana"), intOr(dm, "maxMana"), intOr(dm, "deckSize"));
             }
             ImGui::SameLine(io.DisplaySize.x - 70);
-            if (ImGui::SmallButton("Leave")) backToMenu("");
+            if (ImGui::SmallButton("Leave")) leaveAndBackToMenu("");
             ImGui::EndChild();
 
             // ---- What to click next
@@ -606,7 +755,7 @@ int main() {
                 std::string label = strOr(hero, "name");
                 if (strOr(hero, "id") == myId) label += " (you)";
                 if (strOr(hero, "id") == strOr(state, "active")) label += " *";
-                if (!boolOr(hero, "connected", true)) label += " [left]";
+                if (!boolOr(hero, "connected", true)) label += " [offline]";
                 const bool canTarget = myTurn && ((iAmDm && (selectedMonster >= 0 || bossOrder)) ||
                                                   (!iAmDm && selectedCard >= 0 && targetsHero(selectedEffect)));
                 ImGui::PushID(static_cast<int>(i));
@@ -695,9 +844,24 @@ int main() {
                 const bool iWon = heroesWon != iAmDm;
                 ImGui::Text("%s win! %s", heroesWon ? "The heroes" : "The Dungeon Master", iWon ? "You won." : "You lost.");
                 ImGui::SetWindowFontScale(1.0f);
-                if (ImGui::Button("Back to menu", ImVec2(-1, 36))) backToMenu("");
+                if (ImGui::Button("Back to menu", ImVec2(-1, 36))) leaveAndBackToMenu("");
                 ImGui::End();
             }
+        }
+
+        if (reconnecting) {
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(420, 0));
+            ImGui::Begin("Reconnecting", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::SetWindowFontScale(1.3f);
+            ImGui::TextUnformatted("Connection lost");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::TextWrapped("Reconnecting to room %s on %s:%u (attempt %d/%d)...",
+                               activeSession.roomCode.c_str(), activeSession.address.c_str(),
+                               activeSession.port, reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
+            if (ImGui::Button("Leave match", ImVec2(-1, 34))) leaveAndBackToMenu("");
+            ImGui::End();
         }
 
         ImGui::Render();

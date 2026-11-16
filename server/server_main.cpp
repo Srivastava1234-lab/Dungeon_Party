@@ -40,7 +40,9 @@ int main(int argc, char** argv) {
     try {
         GameData gameData(dataDir);
         RoomServer server(gameData, port);
-        std::cout << "Dungeon Party server listening on UDP port " << port << " (Ctrl+C to stop)\n";
+        std::cout << "Dungeon Party server listening on UDP port " << port
+                  << " (protocol v" << net::PROTOCOL_VERSION
+                  << ", reconnect grace " << net::EMPTY_ROOM_GRACE_SECONDS << "s, Ctrl+C to stop)\n";
         while (running) server.poll(100);
         std::cout << "Shutting down\n";
     } catch (const std::exception& e) {
