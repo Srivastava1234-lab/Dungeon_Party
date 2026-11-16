@@ -19,24 +19,31 @@ NetClient::~NetClient() {
     if (host) enet_host_destroy(host);
 }
 
-bool NetClient::connect(const std::string& serverAddress, std::uint16_t port) {
+bool NetClient::connect(const std::string& serverAddress, std::uint16_t port, int protocolVersion) {
     if (!host) return false;
     if (server) disconnect();
 
+    const std::string trimmed = net::trimWhitespace(serverAddress);
+    if (trimmed.empty()) {
+        error = "Enter a server address";
+        return false;
+    }
+
     ENetAddress address{};
     // Resolves domain names too (e.g. "dungeon.example.com"). This is the only call that may block briefly.
-    if (enet_address_set_host(&address, serverAddress.c_str()) != 0) {
-        error = "Unknown server address: " + serverAddress;
+    if (enet_address_set_host(&address, trimmed.c_str()) != 0) {
+        error = "Unknown server address: " + trimmed;
         return false;
     }
     address.port = port;
 
-    server = enet_host_connect(host, &address, net::CHANNEL_COUNT, net::PROTOCOL_VERSION);
+    server = enet_host_connect(host, &address, net::CHANNEL_COUNT, static_cast<enet_uint32>(protocolVersion));
     if (!server) {
         error = "Could not start connecting";
         return false;
     }
-    enet_peer_timeout(server, 0, 5000, 10000); // give up after ~5-10 s instead of ENet's default 30 s
+    enet_peer_ping_interval(server, 1000);       // keep NAT mapping alive across routers
+    enet_peer_timeout(server, 0, 5000, 10000);   // give up after ~5-10 s instead of ENet's default 30 s
     error.clear();
     inbox.clear();
     currentStatus = Status::Connecting;

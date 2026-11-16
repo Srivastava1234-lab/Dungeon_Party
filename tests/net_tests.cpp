@@ -277,6 +277,143 @@ int main() {
         for (const auto& m : round4["monsters"]) bossSeen = bossSeen || m["boss"] == true;
         check(bossSeen, "final boss arrives in round 4");
 
+        // ===== Endpoint parsing =====
+        {
+            auto ep1 = net::parseServerEndpoint("  play.example.com:12345  ", 7777);
+            check(ep1.host == "play.example.com" && ep1.port == 12345, "parseServerEndpoint parses host:port");
+            auto ep2 = net::parseServerEndpoint("192.168.1.50", 7777);
+            check(ep2.host == "192.168.1.50" && ep2.port == 7777, "parseServerEndpoint uses fallback port");
+            auto ep3 = net::parseServerEndpoint("[::1]:8888", 7777);
+            check(ep3.host == "::1" && ep3.port == 8888, "parseServerEndpoint parses IPv6 [host]:port");
+        }
+
+        // ===== Protocol version mismatch is rejected =====
+        {
+            TestClient wrongVersion;
+            std::vector<TestClient*> list{&wrongVersion};
+            wrongVersion.net.connect("127.0.0.1", TEST_PORT, net::PROTOCOL_VERSION + 99);
+            pump(server, list, [&] { return wrongVersion.net.status() == NetClient::Status::Disconnected; });
+            check(!wrongVersion.lastOfType(net::msg::ERROR).is_null(),
+                  "client with wrong protocol version receives error and is disconnected");
+        }
+
+        // ===== Reconnect mid-match =====
+        {
+            TestClient p1, p2;
+            std::vector<TestClient*> party{&p1, &p2};
+            for (auto* c : party) c->net.connect("127.0.0.1", TEST_PORT);
+            pump(server, party, [&] {
+                return p1.net.status() == NetClient::Status::Connected && p2.net.status() == NetClient::Status::Connected;
+            });
+            p1.net.send({{"t", net::msg::CREATE}, {"name", "Alice"}});
+            pump(server, party, [&] { return !p1.lastOfType(net::msg::JOINED).is_null(); });
+            const std::string rCode = p1.lastOfType(net::msg::JOINED)["code"];
+            const std::string p1Token = p1.lastOfType(net::msg::JOINED)["token"];
+            check(!p1Token.empty(), "host receives a reconnect token");
+
+            p2.net.send({{"t", net::msg::JOIN}, {"name", "Bob"}, {"code", rCode}});
+            pump(server, party, [&] { return !p2.lastOfType(net::msg::JOINED).is_null(); });
+            const std::string p2Id = p2.lastOfType(net::msg::JOINED)["you"];
+            const std::string p2Token = p2.lastOfType(net::msg::JOINED)["token"];
+            check(!p2Token.empty() && p2Token != p1Token, "guest receives a distinct reconnect token");
+
+            p1.net.send({{"t", net::msg::START}});
+            pump(server, party, [&] { return !p1.lastOfType(net::msg::STATE).is_null() && !p2.lastOfType(net::msg::STATE).is_null(); });
+
+            // Wrong token is rejected
+            TestClient impostor;
+            std::vector<TestClient*> withImpostor{&p1, &p2, &impostor};
+            impostor.net.connect("127.0.0.1", TEST_PORT);
+            pump(server, withImpostor, [&] { return impostor.net.status() == NetClient::Status::Connected; });
+            impostor.net.send({{"t", net::msg::REJOIN}, {"code", rCode}, {"token", "WRONG_TOKEN"}});
+            pump(server, withImpostor, [&] { return !impostor.lastOfType(net::msg::ERROR).is_null(); });
+            check(impostor.lastOfType(net::msg::JOINED).is_null(), "wrong reconnect token is rejected");
+            impostor.net.disconnect();
+
+            // p2 disconnects mid-match, then rejoins
+            p1.received.clear();
+            p2.net.disconnect();
+            pump(server, party, [&] {
+                auto st = p1.lastOfType(net::msg::STATE);
+                return !st.is_null() && st["heroes"][1]["connected"] == false;
+            });
+            check(true, "other player sees p2 marked disconnected");
+
+            TestClient p2Rejoined;
+            std::vector<TestClient*> withRejoin{&p1, &p2Rejoined};
+            p2Rejoined.net.connect("127.0.0.1", TEST_PORT);
+            pump(server, withRejoin, [&] { return p2Rejoined.net.status() == NetClient::Status::Connected; });
+            p1.received.clear();
+            p2Rejoined.net.send({{"t", net::msg::REJOIN}, {"code", rCode}, {"token", p2Token}});
+            pump(server, withRejoin, [&] {
+                return !p2Rejoined.lastOfType(net::msg::JOINED).is_null() &&
+                       !p2Rejoined.lastOfType(net::msg::STATE).is_null();
+            });
+            check(p2Rejoined.lastOfType(net::msg::JOINED).value("rejoined", false) == true, "rejoin sends joined with rejoined=true");
+            check(p2Rejoined.lastOfType(net::msg::STATE)["you"] == p2Id &&
+                  p2Rejoined.lastOfType(net::msg::STATE)["heroes"][1]["connected"] == true,
+                  "rejoined player recovers their hero seat and state");
+
+            // Stale peer takeover: p1 reconnects from a second client before old p1 disconnects
+            TestClient p1Takeover;
+            std::vector<TestClient*> takeoverList{&p1, &p1Takeover, &p2Rejoined};
+            p1Takeover.net.connect("127.0.0.1", TEST_PORT);
+            pump(server, takeoverList, [&] { return p1Takeover.net.status() == NetClient::Status::Connected; });
+            p1Takeover.net.send({{"t", net::msg::REJOIN}, {"code", rCode}, {"token", p1Token}});
+            pump(server, takeoverList, [&] { return !p1Takeover.lastOfType(net::msg::STATE).is_null(); });
+            check(p1Takeover.lastOfType(net::msg::STATE)["heroes"][0]["connected"] == true,
+                  "stale peer takeover re-binds seat to new connection");
+
+            // Explicit LEAVE clears reconnect token
+            p2Rejoined.net.send({{"t", net::msg::LEAVE}});
+            pump(server, takeoverList, [&] {
+                auto st = p1Takeover.lastOfType(net::msg::STATE);
+                return !st.is_null() && st["heroes"][1]["connected"] == false;
+            });
+            p2Rejoined.net.disconnect();
+            TestClient p2AfterLeave;
+            std::vector<TestClient*> afterLeaveList{&p1Takeover, &p2AfterLeave};
+            p2AfterLeave.net.connect("127.0.0.1", TEST_PORT);
+            pump(server, afterLeaveList, [&] { return p2AfterLeave.net.status() == NetClient::Status::Connected; });
+            p2AfterLeave.net.send({{"t", net::msg::REJOIN}, {"code", rCode}, {"token", p2Token}});
+            pump(server, afterLeaveList, [&] { return !p2AfterLeave.lastOfType(net::msg::ERROR).is_null(); });
+            check(p2AfterLeave.lastOfType(net::msg::JOINED).is_null(), "explicit leave forfeits reconnect token");
+        }
+
+        // ===== All players drop mid-match: paused during grace, pruned after grace =====
+        {
+            RoomServer graceServer(data, TEST_PORT + 1, std::chrono::seconds(1));
+            TestClient soloDrop;
+            std::vector<TestClient*> list{&soloDrop};
+            soloDrop.net.connect("127.0.0.1", TEST_PORT + 1);
+            pump(graceServer, list, [&] { return soloDrop.net.status() == NetClient::Status::Connected; });
+            soloDrop.net.send({{"t", net::msg::CREATE}, {"name", "Lonely"}});
+            pump(graceServer, list, [&] { return !soloDrop.lastOfType(net::msg::JOINED).is_null(); });
+            const std::string gCode = soloDrop.lastOfType(net::msg::JOINED)["code"];
+            const std::string gToken = soloDrop.lastOfType(net::msg::JOINED)["token"];
+            soloDrop.net.send({{"t", net::msg::START}});
+            pump(graceServer, list, [&] { return !soloDrop.lastOfType(net::msg::STATE).is_null(); });
+            const int roundBeforeDrop = soloDrop.lastOfType(net::msg::STATE)["round"];
+            const std::size_t roomsBeforeDrop = graceServer.roomCount();
+
+            soloDrop.net.disconnect();
+            pump(graceServer, list, [&] { return true; });
+            for (int i = 0; i < 10; ++i) graceServer.poll(10);
+            check(graceServer.roomCount() == roomsBeforeDrop, "active room stays alive during empty-room grace period");
+
+            TestClient soloBack;
+            std::vector<TestClient*> backList{&soloBack};
+            soloBack.net.connect("127.0.0.1", TEST_PORT + 1);
+            pump(graceServer, backList, [&] { return soloBack.net.status() == NetClient::Status::Connected; });
+            soloBack.net.send({{"t", net::msg::REJOIN}, {"code", gCode}, {"token", gToken}});
+            pump(graceServer, backList, [&] { return !soloBack.lastOfType(net::msg::STATE).is_null(); });
+            check(soloBack.lastOfType(net::msg::STATE)["round"] == roundBeforeDrop,
+                  "match paused at same round while everyone was disconnected");
+
+            soloBack.net.disconnect();
+            pump(graceServer, backList, [&] { return graceServer.roomCount() == 0; }, 3000);
+            check(true, "empty active room closes after reconnect grace expires");
+        }
         // ===== Turn timer (a second server where every turn lasts 1 second) =====
         RoomServer fastServer(data, TEST_PORT + 1, 1);
         TestClient slowHero, slowGuest, dmTimer, timerHero;

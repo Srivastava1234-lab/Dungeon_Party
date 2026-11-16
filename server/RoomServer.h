@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -24,15 +25,17 @@
 #include <nlohmann/json.hpp>
 
 #include "../net/EnetLibrary.h"
+#include "../net/Protocol.h"
 #include "GameData.h"
 #include "Match.h"
 
 class RoomServer {
 public:
     // Listens on all network interfaces on 'port'. Throws std::runtime_error if the port is taken.
+    RoomServer(const GameData& gameData, std::uint16_t port,
+               std::chrono::seconds emptyRoomGrace = std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS));
     // Turn time limits come from rules.json; 'turnSecondsOverride' > 0 replaces them for every
     // turn (used by the tests, and handy for a quick demo: dungeon_server 7777 <data> 15).
-    RoomServer(const GameData& gameData, std::uint16_t port, int turnSecondsOverride = 0);
     ~RoomServer();
     RoomServer(const RoomServer&) = delete;
     RoomServer& operator=(const RoomServer&) = delete;
@@ -48,6 +51,7 @@ private:
         std::string id;           // "p1", "p2", ... unique inside the room; also the Hero's playerId
         std::string name;
         std::string role;         // "" = not chosen yet, "dm", or a hero id from heroes.json ("warrior", "healer")
+        std::string token;        // secret token allowing this player to reclaim their seat on reconnect
     };
 
     struct Room {
@@ -62,6 +66,7 @@ private:
         int turnSeconds = 0;                                  // 0 = no limit
         std::chrono::steady_clock::time_point turnDeadline{};
         int nextMemberNumber = 1;
+        std::optional<std::chrono::steady_clock::time_point> emptySince; // set when all players drop mid-match
     };
 
     struct PeerInfo {
@@ -73,19 +78,21 @@ private:
     net::EnetLibrary enetLibrary; // must be constructed before 'host' and destroyed after it
     ENetHost* host = nullptr;
     const GameData& gameData;
+    std::chrono::seconds emptyRoomGrace;
     std::mt19937 rng;
     int turnSecondsOverride = 0;
     std::map<std::string, Room> rooms;                 // code -> room
     std::unordered_map<ENetPeer*, PeerInfo> peers;     // every connected peer
 
     // ENet events
-    void onConnect(ENetPeer* peer);
+    void onConnect(ENetPeer* peer, enet_uint32 protocolVersion);
     void onDisconnect(ENetPeer* peer);
     void onPacket(ENetPeer* peer, const ENetPacket* packet);
 
     // Requests
     void handleCreate(ENetPeer* peer, const nlohmann::json& message);
     void handleJoin(ENetPeer* peer, const nlohmann::json& message);
+    void handleRejoin(ENetPeer* peer, const nlohmann::json& message);
     void handleRole(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
     void handleStart(ENetPeer* peer, Room& room, Member& member);
     void handlePlay(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
@@ -94,7 +101,8 @@ private:
     void handleBoss(ENetPeer* peer, Room& room, Member& member, const nlohmann::json& message);
 
     // Helpers
-    void leaveRoom(ENetPeer* peer);
+    void leaveRoom(ENetPeer* peer, bool explicitLeave);
+    void pruneExpiredRooms();
     Room* roomOf(ENetPeer* peer);
     Member* memberOf(Room& room, ENetPeer* peer);
     std::string newRoomCode();

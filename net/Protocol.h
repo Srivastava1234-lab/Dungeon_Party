@@ -21,7 +21,7 @@
 namespace net {
 
 constexpr std::uint16_t DEFAULT_PORT = 7777;
-constexpr int PROTOCOL_VERSION = 1;
+constexpr int PROTOCOL_VERSION = 2;
 
 // ENet settings
 constexpr std::size_t CHANNEL_COUNT = 1;          // one reliable, ordered channel is enough for a turn-based game
@@ -31,14 +31,17 @@ constexpr std::size_t MAX_PACKET_BYTES = 16 * 1024; // ENet's default is 32 MB -
 // Room rules
 constexpr std::size_t MAX_PLAYERS_PER_ROOM = 6;   // Match allows 1-6 heroes
 constexpr std::size_t ROOM_CODE_LENGTH = 6;
+constexpr std::size_t RECONNECT_TOKEN_LENGTH = 24;
 constexpr int MAX_WRONG_CODES = 5;                // then the server disconnects the peer (stops code guessing)
 constexpr std::size_t MAX_NAME_LENGTH = 16;
+constexpr int EMPTY_ROOM_GRACE_SECONDS = 60;      // keep an active match alive briefly if everyone disconnects
 
 // Room codes avoid characters people mix up when reading them out: 0/O, 1/I/L.
 // 31^6 = ~887 million possible codes.
 inline constexpr const char* DM_ROLE = "dm";
 
 inline constexpr char ROOM_CODE_ALPHABET[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+inline constexpr char TOKEN_ALPHABET[] = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
 
 inline std::string generateRoomCode(std::mt19937& rng) {
     constexpr std::size_t alphabetSize = sizeof(ROOM_CODE_ALPHABET) - 1;
@@ -46,6 +49,63 @@ inline std::string generateRoomCode(std::mt19937& rng) {
     std::string code;
     for (std::size_t i = 0; i < ROOM_CODE_LENGTH; ++i) code += ROOM_CODE_ALPHABET[pick(rng)];
     return code;
+}
+
+inline std::string generateReconnectToken(std::mt19937& rng) {
+    constexpr std::size_t alphabetSize = sizeof(TOKEN_ALPHABET) - 1;
+    std::uniform_int_distribution<std::size_t> pick(0, alphabetSize - 1);
+    std::string token;
+    token.reserve(RECONNECT_TOKEN_LENGTH);
+    for (std::size_t i = 0; i < RECONNECT_TOKEN_LENGTH; ++i) token += TOKEN_ALPHABET[pick(rng)];
+    return token;
+}
+
+inline std::string trimWhitespace(const std::string& raw) {
+    std::size_t start = 0;
+    while (start < raw.size() && std::isspace(static_cast<unsigned char>(raw[start]))) ++start;
+    std::size_t end = raw.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(raw[end - 1]))) --end;
+    return raw.substr(start, end - start);
+}
+
+struct ServerEndpoint {
+    std::string host;
+    std::uint16_t port = DEFAULT_PORT;
+};
+
+// Parses "example.com", "1.2.3.4:12345", or "[::1]:7777". Falls back to defaultPort when no port is given.
+inline ServerEndpoint parseServerEndpoint(const std::string& raw, std::uint16_t defaultPort = DEFAULT_PORT) {
+    std::string text = trimWhitespace(raw);
+    if (text.empty()) return {"", defaultPort};
+
+    if (text.front() == '[') {
+        const auto close = text.find(']');
+        if (close != std::string::npos) {
+            std::string host = text.substr(1, close - 1);
+            std::uint16_t port = defaultPort;
+            if (close + 1 < text.size() && text[close + 1] == ':') {
+                try {
+                    const unsigned long parsed = std::stoul(text.substr(close + 2));
+                    if (parsed > 0 && parsed <= 65535) port = static_cast<std::uint16_t>(parsed);
+                } catch (...) {}
+            }
+            return {host, port};
+        }
+    }
+
+    const auto colon = text.rfind(':');
+    if (colon != std::string::npos && text.find(':') == colon) {
+        const std::string portPart = text.substr(colon + 1);
+        if (!portPart.empty()) {
+            try {
+                const unsigned long parsed = std::stoul(portPart);
+                if (parsed > 0 && parsed <= 65535) {
+                    return {trimWhitespace(text.substr(0, colon)), static_cast<std::uint16_t>(parsed)};
+                }
+            } catch (...) {}
+        }
+    }
+    return {text, defaultPort};
 }
 
 // Upper-cases and strips spaces/dashes, so "abc 123" and "ABC-123" both work when typed in.
@@ -76,6 +136,7 @@ namespace msg {
     // client -> server
     inline constexpr const char* CREATE = "create"; // { name }                     host makes a new room
     inline constexpr const char* JOIN   = "join";   // { name, code }               join an existing room
+    inline constexpr const char* REJOIN = "rejoin"; // { code, token }              rejoin a disconnected seat
     inline constexpr const char* START  = "start";  // {}                           host only, starts the match
     inline constexpr const char* ROLE   = "role";   // { role }                     lobby: "dm" or a hero id ("warrior", "healer")
     inline constexpr const char* PLAY   = "play";   // { card, target, targetType } hero: hand index + "monster"/"hero" index
@@ -85,7 +146,7 @@ namespace msg {
     inline constexpr const char* LEAVE  = "leave";  // {}
 
     // server -> client
-    inline constexpr const char* JOINED = "joined"; // { code, you, host }          you are in a room now
+    inline constexpr const char* JOINED = "joined"; // { code, you, token }         you are in a room now
     inline constexpr const char* LOBBY  = "lobby";  // { code, players[] }          waiting room changed
     inline constexpr const char* STATE  = "state";  // { round, phase, ... }        match state (only YOUR hand)
     inline constexpr const char* ERROR  = "error";  // { msg }                      request was rejected
