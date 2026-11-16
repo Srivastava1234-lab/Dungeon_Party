@@ -61,8 +61,8 @@ std::string readString(const json& message, const char* key) {
 
 // ===================== Setup =====================
 
-RoomServer::RoomServer(const GameData& data, std::uint16_t port)
-    : gameData(data), rng(std::random_device{}()) {
+RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride)
+    : gameData(data), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
     ENetAddress address{};
     address.host = ENET_HOST_ANY; // listen on every network interface
     address.port = port;
@@ -91,6 +91,7 @@ void RoomServer::poll(std::uint32_t timeoutMs) {
             default: break;
         }
     }
+    endExpiredTurns(); // the turn timer runs even when nobody sends anything
     enet_host_flush(host);
 }
 
@@ -469,6 +470,62 @@ void RoomServer::playBotDungeonMaster(Match& match, DungeonMaster& dm) {
     }
 }
 
+// ===================== Turn timer =====================
+
+int RoomServer::turnLimitFor(const Player& player) const {
+    if (turnSecondsOverride > 0) return turnSecondsOverride;
+    const RulesDefinition& rules = gameData.getRules();
+    return dynamic_cast<const DungeonMaster*>(&player) ? rules.dmTurnTimeLimitSeconds : rules.heroTurnTimeLimitSeconds;
+}
+
+void RoomServer::restartTimerIfTurnChanged(Room& room) {
+    if (!room.match) return;
+    const Player* active = room.match->getActivePlayer();
+    if (!active || room.match->isFinished()) {
+        room.timedTurn.clear();
+        room.turnSeconds = 0;
+        return;
+    }
+    // The same player can be active again in the next round (one hero vs. the computer DM),
+    // so the round is part of the key.
+    const std::string turn = active->getPlayerId() + "#" + std::to_string(room.match->getRound());
+    if (turn == room.timedTurn) return; // same turn: playing a card does NOT give extra time
+    room.timedTurn = turn;
+    room.turnSeconds = turnLimitFor(*active);
+    room.turnDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(room.turnSeconds);
+}
+
+int RoomServer::millisecondsLeft(const Room& room) const {
+    if (room.turnSeconds <= 0) return 0;
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(room.turnDeadline - std::chrono::steady_clock::now());
+    return static_cast<int>(std::max<long long>(0, left.count()));
+}
+
+void RoomServer::endExpiredTurns() {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto& [code, room] : rooms) {
+        if (!room.match || room.turnSeconds <= 0 || room.timedTurn.empty() || now < room.turnDeadline) continue;
+        Player* active = room.match->getActivePlayer();
+        if (!active || room.match->isFinished()) continue;
+
+        const std::string name = active->getName();
+        const bool dmTurnEnds = dynamic_cast<DungeonMaster*>(active) != nullptr;
+        try {
+            // Exactly what the End turn button does - a DM's orders given so far are still carried out.
+            room.match->endTurn(*active);
+        } catch (const std::exception& e) {
+            std::cerr << "Room " << code << ": could not end timed-out turn: " << e.what() << "\n";
+            room.turnSeconds = 0; // don't retry every poll
+            continue;
+        }
+        if (dmTurnEnds) room.queued = json::array();
+        std::cout << "Room " << code << ": " << name << " ran out of time\n";
+        skipBotAndAbsentTurns(room);
+        broadcastInfo(room, name + " ran out of time - turn ended automatically");
+        broadcastState(room); // also starts the next player's timer
+    }
+}
+
 // ===================== Sending =====================
 
 void RoomServer::send(ENetPeer* peer, const json& message) {
@@ -489,7 +546,13 @@ void RoomServer::broadcastLobby(const Room& room) {
     for (const auto& m : room.members) send(m.peer, message); // only this room's members
 }
 
-void RoomServer::broadcastState(const Room& room) {
+void RoomServer::broadcastInfo(const Room& room, const std::string& text) {
+    const json message = {{"t", net::msg::INFO}, {"msg", text}};
+    for (const auto& m : room.members) send(m.peer, message);
+}
+
+void RoomServer::broadcastState(Room& room) {
+    restartTimerIfTurnChanged(room); // every turn change ends up here, so the timer can never miss one
     for (const auto& m : room.members)
         if (m.peer) send(m.peer, stateFor(room, m)); // each member gets their own view
 }
@@ -564,6 +627,10 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
                             {"maxHp", monster->getMaxHealth()}, {"alive", monster->isAlive()},
                             {"boss", monster->isBoss()}});
     state["monsters"] = monsters;
+
+    // Turn timer: the client counts down from this, but only the server ends the turn.
+    state["turnSeconds"] = room.turnSeconds;
+    state["turnMsLeft"] = millisecondsLeft(room);
     return state;
 }
 

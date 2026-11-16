@@ -132,7 +132,8 @@ struct RulesDefinition {
     bool shuffleDeckAtMatchStart = true; // shuffle every deck once when the match starts
     bool refillManaEachRound = true;     // mana goes back to maxMana every round
     int maxManaIncreasePerRound = 0;     // 0 = maxMana never grows (Sprint 1)
-    int heroTurnTimeLimitSeconds = 0;    // hero turn timer (config only; timer comes in Sprint 2)
+    int heroTurnTimeLimitSeconds = 0;    // seconds a hero has for their turn; the server ends it automatically
+    int dmTurnTimeLimitSeconds = 0;      // same for the Dungeon Master (optional in rules.json, defaults to the hero value)
     bool temporary = true;
 };
 

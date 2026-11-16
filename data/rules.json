@@ -5,6 +5,7 @@
   "shuffleDeckAtMatchStart": true,
   "refillManaEachRound": true,
   "maxManaIncreasePerRound": 0,
-  "heroTurnTimeLimitSeconds": 30,
+  "heroTurnTimeLimitSeconds": 60,
+  "dmTurnTimeLimitSeconds": 60,
   "temporary": true
 }

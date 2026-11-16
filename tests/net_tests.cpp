@@ -108,6 +108,8 @@ int main() {
         pump(server, all, [&] { return !host.lastOfType(net::msg::STATE).is_null() && !guest.lastOfType(net::msg::STATE).is_null(); });
         json hostState = host.lastOfType(net::msg::STATE);
         check(hostState["active"] == hostState["you"], "match starts on the host's turn");
+        check(hostState["turnSeconds"] == 60 && hostState["turnMsLeft"].get<int>() > 55000 &&
+              hostState["turnMsLeft"].get<int>() <= 60000, "turn timer uses the 60 seconds from rules.json");
         check(stranger.countOfType(net::msg::STATE) == 0, "other room receives nothing from this match");
         check(hostState["hand"].size() >= 1, "host sees their own hand");
         // Hidden information: each client's "hand" matches THEIR hero's hand size, never someone else's.
@@ -274,6 +276,84 @@ int main() {
         bool bossSeen = false;
         for (const auto& m : round4["monsters"]) bossSeen = bossSeen || m["boss"] == true;
         check(bossSeen, "final boss arrives in round 4");
+
+        // ===== Turn timer (a second server where every turn lasts 1 second) =====
+        RoomServer fastServer(data, TEST_PORT + 1, 1);
+        TestClient slowHero, slowGuest, dmTimer, timerHero;
+        std::vector<TestClient*> timed{&slowHero, &slowGuest, &dmTimer, &timerHero};
+        for (auto* c : timed) c->net.connect("127.0.0.1", TEST_PORT + 1);
+        pump(fastServer, timed, [&] {
+            for (auto* c : timed) if (c->net.status() != NetClient::Status::Connected) return false;
+            return true;
+        });
+
+        // Room 1: two heroes who never press anything
+        slowHero.net.send({{"t", net::msg::CREATE}, {"name", "Sleepy"}});
+        pump(fastServer, timed, [&] { return !slowHero.lastOfType(net::msg::JOINED).is_null(); });
+        slowGuest.net.send({{"t", net::msg::JOIN}, {"name", "Dozy"}, {"code", slowHero.lastOfType(net::msg::JOINED)["code"]}});
+        pump(fastServer, timed, [&] { return !slowGuest.lastOfType(net::msg::JOINED).is_null(); });
+        const std::string sleepyId = slowHero.lastOfType(net::msg::JOINED)["you"];
+        const std::string dozyId = slowGuest.lastOfType(net::msg::JOINED)["you"];
+        slowHero.net.send({{"t", net::msg::START}});
+        pump(fastServer, timed, [&] { return !slowGuest.lastOfType(net::msg::STATE).is_null(); });
+        json timedState = slowGuest.lastOfType(net::msg::STATE);
+        check(timedState["active"] == sleepyId && timedState["turnSeconds"] == 1 &&
+              timedState["turnMsLeft"].get<int>() > 0 && timedState["turnMsLeft"].get<int>() <= 1000,
+              "everyone receives the countdown for the active player's turn");
+
+        const auto turnStart = std::chrono::steady_clock::now();
+        pump(fastServer, timed, [&] { return slowGuest.lastOfType(net::msg::STATE)["active"] == dozyId; });
+        const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - turnStart).count();
+        check(waited >= 800, "the turn is NOT ended early (waited " + std::to_string(waited) + " ms)");
+        check(slowHero.lastOfType(net::msg::INFO)["msg"] == "Sleepy ran out of time - turn ended automatically",
+              "everyone is told that the turn timed out");
+        check(slowGuest.lastOfType(net::msg::STATE)["turnMsLeft"].get<int>() > 500, "the next player gets a fresh timer");
+
+        // The second hero also sleeps: the computer DM plays instantly and round 2 starts with the first hero
+        pump(fastServer, timed, [&] {
+            auto st = slowHero.lastOfType(net::msg::STATE);
+            return st["round"] == 2 && st["active"] == sleepyId;
+        });
+        check(true, "after both heroes time out, the computer DM plays and round 2 begins");
+
+        // Playing a card does not reset the timer
+        slowHero.received.clear();
+        slowHero.net.send({{"t", net::msg::PLAY}, {"card", 0}, {"target", 0}, {"targetType", "monster"}});
+        pump(fastServer, timed, [&] { return !slowHero.lastOfType(net::msg::STATE).is_null() || !slowHero.lastOfType(net::msg::ERROR).is_null(); });
+        if (!slowHero.lastOfType(net::msg::STATE).is_null())
+            check(slowHero.lastOfType(net::msg::STATE)["turnMsLeft"].get<int>() < 1000, "playing a card does not give extra time");
+
+        // Room 2: a human DM gives an order and then lets the timer run out - the order still happens
+        timerHero.net.send({{"t", net::msg::CREATE}, {"name", "Hero"}});
+        pump(fastServer, timed, [&] { return !timerHero.lastOfType(net::msg::JOINED).is_null(); });
+        dmTimer.net.send({{"t", net::msg::JOIN}, {"name", "SlowDM"}, {"code", timerHero.lastOfType(net::msg::JOINED)["code"]}});
+        pump(fastServer, timed, [&] { return !dmTimer.lastOfType(net::msg::JOINED).is_null(); });
+        dmTimer.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
+        pump(fastServer, timed, [&] {
+            auto lobby = timerHero.lastOfType(net::msg::LOBBY);
+            return !lobby.is_null() && lobby["players"].size() == 2 && lobby["players"][1]["role"] == "dm";
+        });
+        timerHero.net.send({{"t", net::msg::START}});
+        pump(fastServer, timed, [&] { return !timerHero.lastOfType(net::msg::STATE).is_null(); });
+        timerHero.received.clear();
+        timerHero.net.send({{"t", net::msg::END}});
+        pump(fastServer, timed, [&] {
+            auto st = dmTimer.lastOfType(net::msg::STATE);
+            return !st.is_null() && st["active"] == st["you"] && st["hand"].size() > 0;
+        });
+        json dmTurn = dmTimer.lastOfType(net::msg::STATE);
+        check(dmTurn["turnSeconds"] == 1, "the DM's turn is timed too");
+        int slash = -1;
+        for (std::size_t i = 0; i < dmTurn["hand"].size(); ++i)
+            if (dmTurn["hand"][i]["effect"] == "DM_ATTACK" && slash < 0) slash = static_cast<int>(i);
+        const int heroHp = dmTurn["heroes"][0]["hp"];
+        dmTimer.net.send({{"t", net::msg::COMMAND}, {"card", slash}, {"monster", 0}, {"hero", 0}});
+        pump(fastServer, timed, [&] {
+            auto st = timerHero.lastOfType(net::msg::STATE);
+            return !st.is_null() && st["round"] == 2;
+        });
+        check(timerHero.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < heroHp,
+              "when the DM times out, the orders already given are still carried out");
 
         std::cout << "All network tests passed.\n";
         return 0;
