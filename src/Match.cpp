@@ -295,35 +295,22 @@ void Match::checkWinner() {
         return;
     }
 
-    // With a scheduled boss, heroes must defeat that boss.
-    if (pendingBoss || finalBoss) {
-        if (finalBoss != nullptr && !finalBoss->isAlive()) {
-            winner = Side::HEROES;
-            addPublicLog("The heroes win.");
-        }
-
+    // SCRUM-44: the heroes win only after defeating EVERY monster, the boss included.
+    // While the boss hasn't arrived yet, the match cannot be won.
+    if (pendingBoss) {
         return;
     }
 
-    bool hadBoss = false;
-    bool livingBoss = false;
     bool livingMonster = false;
 
     for (std::size_t i = 0; i < monsters.size(); i++) {
-        if (monsters[i]->isBoss()) {
-            hadBoss = true;
-
-            if (monsters[i]->isAlive()) {
-                livingBoss = true;
-            }
-        }
-
         if (monsters[i]->isAlive()) {
             livingMonster = true;
+            break;
         }
     }
 
-    if ((hadBoss && !livingBoss) || !livingMonster) {
+    if (!livingMonster) {
         winner = Side::HEROES;
         addPublicLog("The heroes win.");
     }

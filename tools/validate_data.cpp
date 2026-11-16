@@ -117,7 +117,8 @@ void printRules(const RulesDefinition& rules) {
               << "  shuffle deck at start:     " << (rules.shuffleDeckAtMatchStart ? "yes" : "no") << "\n"
               << "  refill mana each round:    " << (rules.refillManaEachRound ? "yes" : "no") << "\n"
               << "  max mana increase / round: " << rules.maxManaIncreasePerRound << "\n"
-              << "  hero turn time limit:      " << rules.heroTurnTimeLimitSeconds << " s\n";
+              << "  hero turn time limit:      " << rules.heroTurnTimeLimitSeconds << " s\n"
+              << "  DM turn time limit:        " << rules.dmTurnTimeLimitSeconds << " s\n";
 }
 
 void printLevel(const LevelDefinition& level) {

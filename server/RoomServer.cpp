@@ -61,8 +61,8 @@ std::string readString(const json& message, const char* key) {
 
 // ===================== Setup =====================
 
-RoomServer::RoomServer(const GameData& data, std::uint16_t port)
-    : gameData(data), rng(std::random_device{}()) {
+RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride, std::chrono::seconds grace)
+    : gameData(data), emptyRoomGrace(grace), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
     ENetAddress address{};
     address.host = ENET_HOST_ANY; // listen on every network interface
     address.port = port;
@@ -82,7 +82,7 @@ void RoomServer::poll(std::uint32_t timeoutMs) {
     while (enet_host_service(host, &event, timeoutMs) > 0) {
         timeoutMs = 0;
         switch (event.type) {
-            case ENET_EVENT_TYPE_CONNECT: onConnect(event.peer); break;
+            case ENET_EVENT_TYPE_CONNECT: onConnect(event.peer, event.data); break;
             case ENET_EVENT_TYPE_DISCONNECT: onDisconnect(event.peer); break;
             case ENET_EVENT_TYPE_RECEIVE:
                 onPacket(event.peer, event.packet);
@@ -91,23 +91,34 @@ void RoomServer::poll(std::uint32_t timeoutMs) {
             default: break;
         }
     }
+    pruneExpiredRooms();
+    endExpiredTurns(); // the turn timer runs even when nobody sends anything
     enet_host_flush(host);
 }
 
 // ===================== ENet events =====================
 
-void RoomServer::onConnect(ENetPeer* peer) {
+void RoomServer::onConnect(ENetPeer* peer, enet_uint32 protocolVersion) {
+    if (protocolVersion != static_cast<enet_uint32>(net::PROTOCOL_VERSION)) {
+        sendError(peer, "Client version mismatch (server expects protocol v" +
+                        std::to_string(net::PROTOCOL_VERSION) + "). Please update your game.");
+        enet_peer_disconnect_later(peer, 0);
+        return;
+    }
     peers[peer] = PeerInfo{};
-    // Drop peers that stop answering instead of waiting the ENet default of ~30 seconds.
+    // Keep NAT mappings alive and drop peers that stop answering sooner than ENet's ~30s default.
+    enet_peer_ping_interval(peer, 1000);
     enet_peer_timeout(peer, 0, 5000, 10000);
 }
 
 void RoomServer::onDisconnect(ENetPeer* peer) {
-    leaveRoom(peer);
+    leaveRoom(peer, false);
     peers.erase(peer);
 }
 
 void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
+    if (peers.find(peer) == peers.end()) return; // rejected during handshake (e.g. version mismatch)
+
     // Never trust client data: parse without exceptions and check the shape.
     const json message = json::parse(packet->data, packet->data + packet->dataLength, nullptr, false);
     if (message.is_discarded() || !message.is_object()) {
@@ -118,7 +129,8 @@ void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
 
     if (type == net::msg::CREATE) return handleCreate(peer, message);
     if (type == net::msg::JOIN) return handleJoin(peer, message);
-    if (type == net::msg::LEAVE) return leaveRoom(peer);
+    if (type == net::msg::REJOIN) return handleRejoin(peer, message);
+    if (type == net::msg::LEAVE) return leaveRoom(peer, true);
 
     // Everything else only makes sense inside a room - and only acts on THAT room.
     Room* room = roomOf(peer);
@@ -141,7 +153,8 @@ void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
 
     Room room;
     room.code = newRoomCode();
-    Member host{peer, "p" + std::to_string(room.nextMemberNumber++), net::sanitizeName(readString(message, "name")), ""};
+    Member host{peer, "p" + std::to_string(room.nextMemberNumber++),
+                net::sanitizeName(readString(message, "name")), "", net::generateReconnectToken(rng)};
     room.hostId = host.id;
     room.members.push_back(host);
 
@@ -151,7 +164,7 @@ void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
     rooms.emplace(code, std::move(room));
 
     std::cout << "Room " << code << " created by " << host.name << "\n";
-    send(peer, {{"t", net::msg::JOINED}, {"code", code}, {"you", host.id}});
+    send(peer, {{"t", net::msg::JOINED}, {"code", code}, {"you", host.id}, {"token", host.token}});
     broadcastLobby(rooms.at(code));
 }
 
@@ -175,17 +188,81 @@ void RoomServer::handleJoin(ENetPeer* peer, const json& message) {
     if (room.match) return sendError(peer, "That match has already started");
     if (room.members.size() >= net::MAX_PLAYERS_PER_ROOM) return sendError(peer, "That room is full");
 
-    Member member{peer, "p" + std::to_string(room.nextMemberNumber++), net::sanitizeName(readString(message, "name")), ""};
+    Member member{peer, "p" + std::to_string(room.nextMemberNumber++),
+                  net::sanitizeName(readString(message, "name")), "", net::generateReconnectToken(rng)};
     room.members.push_back(member);
     peers[peer].roomCode = room.code;
     peers[peer].memberId = member.id;
 
     std::cout << member.name << " joined room " << room.code << "\n";
-    send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", member.id}});
+    send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", member.id}, {"token", member.token}});
     broadcastLobby(room);
 }
 
-void RoomServer::leaveRoom(ENetPeer* peer) {
+void RoomServer::handleRejoin(ENetPeer* peer, const json& message) {
+    if (roomOf(peer)) return sendError(peer, "You are already in a room");
+
+    const std::string code = net::normalizeRoomCode(readString(message, "code"));
+    const std::string token = readString(message, "token");
+    auto roomIt = rooms.find(code);
+    if (roomIt == rooms.end()) {
+        if (++peers[peer].wrongCodes >= net::MAX_WRONG_CODES) {
+            sendError(peer, "Too many wrong room codes");
+            enet_peer_disconnect_later(peer, 0);
+        } else {
+            sendError(peer, "Room not found or closed");
+        }
+        return;
+    }
+
+    Room& room = roomIt->second;
+    auto memberIt = std::find_if(room.members.begin(), room.members.end(),
+                                 [&](const Member& m) { return !m.token.empty() && m.token == token; });
+    if (memberIt == room.members.end()) {
+        if (++peers[peer].wrongCodes >= net::MAX_WRONG_CODES) {
+            sendError(peer, "Too many invalid rejoin attempts");
+            enet_peer_disconnect_later(peer, 0);
+        } else {
+            sendError(peer, "Could not rejoin that room");
+        }
+        return;
+    }
+
+    // If the old socket hasn't timed out yet, detach it silently so its later cleanup cannot touch the new peer.
+    if (memberIt->peer && memberIt->peer != peer) {
+        ENetPeer* oldPeer = memberIt->peer;
+        memberIt->peer = nullptr;
+        peers.erase(oldPeer);
+        enet_peer_reset(oldPeer);
+    }
+
+    memberIt->peer = peer;
+    peers[peer].roomCode = room.code;
+    peers[peer].memberId = memberIt->id;
+    peers[peer].wrongCodes = 0;
+    if (room.emptySince.has_value()) {
+        // The match was paused while everyone was gone: give the current turn a fresh timer.
+        room.timedTurn.clear();
+    }
+    room.emptySince.reset();
+
+    const bool hostConnected = std::any_of(room.members.begin(), room.members.end(),
+                                           [&](const Member& m) { return m.id == room.hostId && m.peer != nullptr; });
+    if (!hostConnected) room.hostId = memberIt->id;
+
+    std::cout << memberIt->name << " rejoined room " << room.code << "\n";
+    send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", memberIt->id},
+                {"token", memberIt->token}, {"rejoined", true}});
+
+    if (room.match) {
+        skipBotAndAbsentTurns(room);
+        broadcastState(room);
+    } else {
+        broadcastLobby(room);
+    }
+}
+
+void RoomServer::leaveRoom(ENetPeer* peer, bool explicitLeave) {
     Room* room = roomOf(peer);
     auto peerIt = peers.find(peer);
     if (peerIt != peers.end()) {
@@ -199,18 +276,27 @@ void RoomServer::leaveRoom(ENetPeer* peer) {
     if (memberIt == room->members.end()) return;
 
     if (room->match) {
-        // During a match the hero stays in the game; their turns are skipped from now on.
+        // During a match the hero stays in the game; their turns are skipped until they rejoin.
         memberIt->peer = nullptr;
+        if (explicitLeave) memberIt->token.clear();
     } else {
         room->members.erase(memberIt);
     }
 
     const bool anyoneConnected = std::any_of(room->members.begin(), room->members.end(),
                                              [](const Member& m) { return m.peer != nullptr; });
+    const bool anyoneCanRejoin = std::any_of(room->members.begin(), room->members.end(),
+                                             [](const Member& m) { return !m.token.empty(); });
     if (!anyoneConnected) {
-        const std::string code = room->code; // copy: erasing by a reference into the erased element is unsafe
-        std::cout << "Room " << code << " closed (empty)\n";
-        rooms.erase(code);
+        if (!room->match || !anyoneCanRejoin || emptyRoomGrace.count() <= 0) {
+            const std::string code = room->code; // copy: erasing by a reference into the erased element is unsafe
+            std::cout << "Room " << code << " closed (empty)\n";
+            rooms.erase(code);
+        } else if (!room->emptySince.has_value()) {
+            room->emptySince = std::chrono::steady_clock::now();
+            std::cout << "Room " << room->code << " paused (waiting up to "
+                      << emptyRoomGrace.count() << "s for reconnect)\n";
+        }
         return;
     }
 
@@ -227,6 +313,19 @@ void RoomServer::leaveRoom(ENetPeer* peer) {
         broadcastState(*room);
     } else {
         broadcastLobby(*room);
+    }
+}
+
+void RoomServer::pruneExpiredRooms() {
+    if (emptyRoomGrace.count() <= 0) return;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = rooms.begin(); it != rooms.end();) {
+        if (it->second.emptySince.has_value() && now - *it->second.emptySince >= emptyRoomGrace) {
+            std::cout << "Room " << it->first << " closed (reconnect grace expired)\n";
+            it = rooms.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
@@ -328,8 +427,12 @@ std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
 
 // Ends turns that nobody at a keyboard can take: the bot DM, and heroes whose player left.
 void RoomServer::skipBotAndAbsentTurns(Room& room) {
-    if (!room.match) return;
+    if (!room.match || room.match->isFinished()) return;
+    const bool anyoneConnected = std::any_of(room.members.begin(), room.members.end(),
+                                             [](const Member& m) { return m.peer != nullptr; });
+    if (!anyoneConnected) return; // pause the match until someone reconnects
     for (int guard = 0; guard < 64; ++guard) { // guard: never loop forever on a logic bug
+        if (room.match->isFinished()) return;
         Player* active = room.match->getActivePlayer();
         if (!active) return;
         bool humanCanPlay = false;
@@ -372,7 +475,7 @@ void RoomServer::handlePlay(ENetPeer* peer, Room& room, Member& member, const js
     } catch (const std::exception& e) {
         return sendError(peer, e.what());
     }
-    broadcastState(room);
+    if (!endTurnIfAllCardsPlayed(room, *active)) broadcastState(room);
 }
 
 void RoomServer::handleEnd(ENetPeer* peer, Room& room, Member& member) {
@@ -387,7 +490,7 @@ void RoomServer::handleEnd(ENetPeer* peer, Room& room, Member& member) {
     broadcastState(room);
 }
 
-// ---- Dungeon Master
+// Dungeon Master
 
 DungeonMaster* RoomServer::activeDungeonMaster(Room& room, const Member& member) {
     if (!room.match) return nullptr;
@@ -419,7 +522,7 @@ void RoomServer::handleCommand(ENetPeer* peer, Room& room, Member& member, const
     } catch (const std::exception& e) {
         return sendError(peer, e.what());
     }
-    broadcastState(room);
+    if (!endTurnIfAllCardsPlayed(room, *dm)) broadcastState(room);
 }
 
 void RoomServer::handleBoss(ENetPeer* peer, Room& room, Member& member, const json& message) {
@@ -436,7 +539,7 @@ void RoomServer::handleBoss(ENetPeer* peer, Room& room, Member& member, const js
     } catch (const std::exception& e) {
         return sendError(peer, e.what());
     }
-    broadcastState(room);
+    if (!endTurnIfAllCardsPlayed(room, *dm)) broadcastState(room);
 }
 
 // The computer DM: every living monster attacks the weakest hero while there are cards and mana,
@@ -469,6 +572,90 @@ void RoomServer::playBotDungeonMaster(Match& match, DungeonMaster& dm) {
     }
 }
 
+// ===================== Automatic turn end =====================
+
+// Once a player has played the maximum number of cards (rules.json: maxCardsPlayedPerTurn),
+// there is nothing left to do - so the turn ends right away instead of waiting for the timer.
+// The DM keeps the turn while the final boss could still be ordered (that order uses no card).
+// Returns true if the turn was ended (then the new state has already been sent).
+bool RoomServer::endTurnIfAllCardsPlayed(Room& room, Player& active) {
+    if (!room.match || room.match->isFinished() || room.match->getActivePlayer() != &active) return false;
+    const int limit = gameData.getRules().maxCardsPlayedPerTurn;
+    if (limit <= 0 || active.getCardsPlayedThisTurn() < limit) return false;
+    const bool isDm = dynamic_cast<DungeonMaster*>(&active) != nullptr;
+    if (isDm && room.match->canQueueBossAttack()) return false;
+
+    const std::string name = active.getName();
+    try {
+        room.match->endTurn(active); // exactly what the End turn button does
+    } catch (const std::exception& e) {
+        std::cerr << "Room " << room.code << ": could not end turn automatically: " << e.what() << "\n";
+        return false;
+    }
+    if (isDm) room.queued = json::array(); // the orders were carried out just now
+    skipBotAndAbsentTurns(room);
+    broadcastInfo(room, name + " played " + std::to_string(limit) + " cards - turn ended automatically");
+    broadcastState(room);
+    return true;
+}
+
+// ===================== Turn timer =====================
+
+int RoomServer::turnLimitFor(const Player& player) const {
+    if (turnSecondsOverride > 0) return turnSecondsOverride;
+    const RulesDefinition& rules = gameData.getRules();
+    return dynamic_cast<const DungeonMaster*>(&player) ? rules.dmTurnTimeLimitSeconds : rules.heroTurnTimeLimitSeconds;
+}
+
+void RoomServer::restartTimerIfTurnChanged(Room& room) {
+    if (!room.match) return;
+    const Player* active = room.match->getActivePlayer();
+    if (!active || room.match->isFinished()) {
+        room.timedTurn.clear();
+        room.turnSeconds = 0;
+        return;
+    }
+    // The same player can be active again in the next round (one hero vs. the computer DM),
+    // so the round is part of the key.
+    const std::string turn = active->getPlayerId() + "#" + std::to_string(room.match->getRound());
+    if (turn == room.timedTurn) return; // same turn: playing a card does NOT give extra time
+    room.timedTurn = turn;
+    room.turnSeconds = turnLimitFor(*active);
+    room.turnDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(room.turnSeconds);
+}
+
+int RoomServer::millisecondsLeft(const Room& room) const {
+    if (room.turnSeconds <= 0) return 0;
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(room.turnDeadline - std::chrono::steady_clock::now());
+    return static_cast<int>(std::max<long long>(0, left.count()));
+}
+
+void RoomServer::endExpiredTurns() {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto& [code, room] : rooms) {
+        if (!room.match || room.turnSeconds <= 0 || room.timedTurn.empty() || now < room.turnDeadline) continue;
+        if (room.emptySince.has_value()) continue; // match paused while everyone reconnects (Taegan): don't run the clock
+        Player* active = room.match->getActivePlayer();
+        if (!active || room.match->isFinished()) continue;
+
+        const std::string name = active->getName();
+        const bool dmTurnEnds = dynamic_cast<DungeonMaster*>(active) != nullptr;
+        try {
+            // Exactly what the End turn button does - a DM's orders given so far are still carried out.
+            room.match->endTurn(*active);
+        } catch (const std::exception& e) {
+            std::cerr << "Room " << code << ": could not end timed-out turn: " << e.what() << "\n";
+            room.turnSeconds = 0; // don't retry every poll
+            continue;
+        }
+        if (dmTurnEnds) room.queued = json::array();
+        std::cout << "Room " << code << ": " << name << " ran out of time\n";
+        skipBotAndAbsentTurns(room);
+        broadcastInfo(room, name + " ran out of time - turn ended automatically");
+        broadcastState(room); // also starts the next player's timer
+    }
+}
+
 // ===================== Sending =====================
 
 void RoomServer::send(ENetPeer* peer, const json& message) {
@@ -489,7 +676,13 @@ void RoomServer::broadcastLobby(const Room& room) {
     for (const auto& m : room.members) send(m.peer, message); // only this room's members
 }
 
-void RoomServer::broadcastState(const Room& room) {
+void RoomServer::broadcastInfo(const Room& room, const std::string& text) {
+    const json message = {{"t", net::msg::INFO}, {"msg", text}};
+    for (const auto& m : room.members) send(m.peer, message);
+}
+
+void RoomServer::broadcastState(Room& room) {
+    restartTimerIfTurnChanged(room); // every turn change ends up here, so the timer can never miss one
     for (const auto& m : room.members)
         if (m.peer) send(m.peer, stateFor(room, m)); // each member gets their own view
 }
@@ -564,6 +757,10 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
                             {"maxHp", monster->getMaxHealth()}, {"alive", monster->isAlive()},
                             {"boss", monster->isBoss()}});
     state["monsters"] = monsters;
+
+    // Turn timer: the client counts down from this, but only the server ends the turn.
+    state["turnSeconds"] = room.turnSeconds;
+    state["turnMsLeft"] = millisecondsLeft(room);
     return state;
 }
 
