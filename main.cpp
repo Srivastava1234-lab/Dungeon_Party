@@ -185,6 +185,11 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+    // --- Loading new fonts
+    ImGuiIO& fontIo = ImGui::GetIO();
+    fontIo.Fonts->AddFontDefault();   // keep the normal font for all other text
+    ImFont* titleFont = fontIo.Fonts->AddFontFromFileTTF("assets/fonts/Cinzel-Bold.ttf", 48.0f);
+
     // ---- Game data and artwork. Every picture path comes from the data files or assets/.
     std::unique_ptr<GameData> gameData;
     std::string dataErrorMessage;
@@ -211,6 +216,7 @@ int main() {
     }
     const GLuint battleBackground = loadTexture("assets/Level_1_Artwork.png");
     const GLuint menuBackground = loadTexture("assets/Menu_Background_AI_Generated.png");
+    const GLuint startBackground = loadTexture("assets/Start_Background_AI_Generated.jpg");
     const GLuint helpButton = loadTexture("assets/Help_Button.png");
     const GLuint heroesWinPicture = loadTexture("assets/Heroes_Win.png");
     const GLuint heroesLosePicture = loadTexture("assets/Heroes_Lose.png");
@@ -333,19 +339,47 @@ int main() {
 
         // ================= SCREEN 1: Start =================
         if (screen == OnlineScreen::Start) {
-            drawBackground(menuBackground);
-            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            drawBackground(startBackground);
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.25f, io.DisplaySize.y * 0.40f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(400, 0));
-            ImGui::SetNextWindowBgAlpha(0.85f);
-            ImGui::Begin("Start", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-            ImGui::SetWindowFontScale(2.0f);
-            ImGui::TextUnformatted("DUNGEON PARTY");
+            ImGui::Begin("Start", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                               ImGuiWindowFlags_NoBackground);
             ImGui::SetWindowFontScale(1.0f);
+            ImGui::PushFont(titleFont);
+            const char* title = "DUNGEON PARTY";
+            float titleWidth = ImGui::CalcTextSize(title).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - titleWidth) * 0.5f);
+
+            ImVec2 titlePos = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                ImVec2(titlePos.x + 3, titlePos.y + 3), IM_COL32(0, 0, 0, 200), title);
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.45f, 1.0f), "%s", title);
+            ImGui::PopFont();
+            
+            ImGui::Dummy(ImVec2(0, 12));
+            ImGui::SetWindowFontScale(1.5f);
             if (!dataErrorMessage.empty()) {
                 ImGui::TextWrapped("%s", dataErrorMessage.c_str());
-            } else if (ImGui::Button("Play", ImVec2(-1, 70))) {
-                screen = OnlineScreen::Menu;
-            }
+            } 
+            else
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.13f, 0.08f, 0.95f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.33f, 0.21f, 0.11f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.85f, 0.65f, 0.30f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 0.92f, 0.75f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+                if(ImGui::Button("Play", ImVec2(-1, 50))) {
+                    screen = OnlineScreen::Menu;
+                }
+                ImGui::Dummy(ImVec2(0, 12));
+                if(ImGui::Button("About us", ImVec2(-1,50))){
+                ImGui::OpenPopup("Who are we?");
+                }
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor(5);
+            } 
             ImGui::End();
         }
         // ================= SCREEN 2: Host / Join =================
