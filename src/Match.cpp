@@ -227,19 +227,12 @@ void Match::checkWinner() {
     if (std::none_of(heroes.begin(), heroes.end(), [](const auto* h){ return h->isAlive(); })) {
         winner = Side::DUNGEON_MASTER; return;
     }
-    if (pendingBoss || finalBoss) {
-        if (finalBoss && !finalBoss->isAlive()) winner = Side::HEROES;
-        return;
-    }
-    bool hadBoss = false, livingBoss = false, livingMonster = false;
-    for (const auto& m : monsters) {
-        hadBoss = hadBoss || m->isBoss();
-        livingBoss = livingBoss || (m->isBoss() && m->isAlive());
-        livingMonster = livingMonster || m->isAlive();
-    }
-    if ((hadBoss && !livingBoss) || !livingMonster){
+    if (pendingBoss) return;
+    if (std::none_of(monsters.begin(), monsters.end(), [](const auto& monster) {
+            return monster->isAlive();
+        })) {
         winner = Side::HEROES;
-    } 
+    }
 }
 
 void Match::endTurn(Player& p) {

@@ -122,8 +122,12 @@ void run(const std::string& name) {
         rejects<std::invalid_argument>([&] { b.match.apply(lance, *b.monster); });
         check(b.hero->getMana() == 8, "An invalid spell target must not cost mana");
         b.match.apply(lance, *b.reserve);
-        check(b.match.getWinner() == Side::HEROES && b.monster->isAlive(),
-              "Defeating the boss must win even with a regular monster alive");
+        check(!b.reserve->isAlive() && b.monster->isAlive() && !b.match.isFinished(),
+              "The match must continue while a regular monster is alive");
+        b.hero->addToDeck(std::make_unique<HeroCard>("Strike", 0, HeroEffect::ATTACK, 14));
+        b.match.apply(*b.hero->drawCard(), *b.monster);
+        check(b.match.getWinner() == Side::HEROES,
+              "Heroes must win after defeating the last remaining monster");
     } else if (name == "frost_bolt") {
         Battle b(10, false, true);
         for (Monster* target : {b.monster, b.reserve}) {
