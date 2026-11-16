@@ -6,5 +6,6 @@
   "refillManaEachRound": true,
   "maxManaIncreasePerRound": 0,
   "heroTurnTimeLimitSeconds": 30,
+  "dmTurnTimeLimitSeconds": 45,
   "temporary": true
 }

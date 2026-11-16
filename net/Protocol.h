@@ -90,6 +90,7 @@ namespace msg {
     inline constexpr const char* STATE  = "state";  // { round, phase, ... }        match state (only YOUR hand)
     inline constexpr const char* ERROR  = "error";  // { msg }                      request was rejected
     inline constexpr const char* CLOSED = "closed"; // { msg }                      room was closed
+    inline constexpr const char* INFO   = "info";   // { msg }                      something happened everyone should see (e.g. turn timed out)
 }
 
 } // namespace net
