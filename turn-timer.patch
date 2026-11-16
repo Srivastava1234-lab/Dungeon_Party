@@ -1,0 +1,563 @@
+From c425cf7c95eb033a8260d8437c71b233a4fcacd2 Mon Sep 17 00:00:00 2001
+From: Akshat Srivastava <akshat.sanya@gmail.com>
+Date: Mon, 16 Nov 2026 18:37:57 +0000
+Subject: [PATCH] Server-side turn timer with automatic turn end and countdown
+ display
+
+- Every turn (heroes and DM) has a time limit; when it runs out the SERVER ends the turn,
+  exactly like End turn (a DM's orders given so far are still carried out)
+- Limits come from rules.json: heroTurnTimeLimitSeconds (now 60) and new
+  dmTurnTimeLimitSeconds (60, optional - defaults to the hero value)
+- Timer restarts on every turn change (End turn, timeout, skipped players, computer DM);
+  playing a card does not give extra time
+- New 'info' message tells the room when a turn timed out
+- State sends turnSeconds and turnMsLeft; the client counts down from its own clock,
+  so client and server clocks don't need to match
+- Battle screen: countdown bar next to End turn (green / orange <= 20 s / red <= 10 s,
+  'Hurry!' for the active player) and the timeout message
+- dungeon_server <port> <data> <seconds> overrides the limit for demos
+- net_tests: countdown sent to everyone, turn not ended early, timeout message,
+  fresh timer for the next player, computer DM after timeouts, no extra time for
+  playing a card, DM timed too, DM's orders carried out on timeout
+---
+ data/README.md          |  6 ++--
+ data/rules.json         |  3 +-
+ include/GameData.h      |  3 +-
+ main.cpp                | 38 ++++++++++++++++++++
+ net/PROTOCOL.md         |  8 ++++-
+ net/Protocol.h          |  1 +
+ server/RoomServer.cpp   | 73 +++++++++++++++++++++++++++++++++++--
+ server/RoomServer.h     | 20 +++++++++--
+ server/server_main.cpp  |  8 +++--
+ src/GameData.cpp        |  3 ++
+ tests/net_tests.cpp     | 80 +++++++++++++++++++++++++++++++++++++++++
+ tools/validate_data.cpp |  3 +-
+ 12 files changed, 233 insertions(+), 13 deletions(-)
+
+diff --git a/data/README.md b/data/README.md
+index 17494eb..ceafe60 100644
+--- a/data/README.md
++++ b/data/README.md
+@@ -166,7 +166,8 @@ Notes:
+   "shuffleDeckAtMatchStart": true,
+   "refillManaEachRound": true,
+   "maxManaIncreasePerRound": 0,
+-  "heroTurnTimeLimitSeconds": 30,
++  "heroTurnTimeLimitSeconds": 60,
++  "dmTurnTimeLimitSeconds": 60,
+   "temporary": true
+ }
+ ```
+@@ -178,7 +179,8 @@ Notes:
+ | `shuffleDeckAtMatchStart` | true/false | required | Shuffle every deck once when the match starts |
+ | `refillManaEachRound` | true/false | required | Mana goes back to `maxMana` every round |
+ | `maxManaIncreasePerRound` | whole number | 0 or more | How much `maxMana` grows per round. `0` = it never grows (Sprint 1) |
+-| `heroTurnTimeLimitSeconds` | whole number | 1 or more | Time limit of a hero turn. **Config only** – the timer is implemented in Sprint 2 |
++| `heroTurnTimeLimitSeconds` | whole number | 1 or more | Time limit of a hero turn. When it runs out, the server ends the turn automatically |
++| `dmTurnTimeLimitSeconds` | whole number | 1 or more | Time limit of the Dungeon Master's turn. Optional – if missing, the hero value is used |
+ | `temporary` | true/false | required | `true` = values not final yet |
+ 
+ ---
+diff --git a/data/rules.json b/data/rules.json
+index 88fb7cc..d31e4fb 100644
+--- a/data/rules.json
++++ b/data/rules.json
+@@ -5,6 +5,7 @@
+   "shuffleDeckAtMatchStart": true,
+   "refillManaEachRound": true,
+   "maxManaIncreasePerRound": 0,
+-  "heroTurnTimeLimitSeconds": 30,
++  "heroTurnTimeLimitSeconds": 60,
++  "dmTurnTimeLimitSeconds": 60,
+   "temporary": true
+ }
+diff --git a/include/GameData.h b/include/GameData.h
+index ca4e3dd..a400a52 100644
+--- a/include/GameData.h
++++ b/include/GameData.h
+@@ -132,7 +132,8 @@ struct RulesDefinition {
+     bool shuffleDeckAtMatchStart = true; // shuffle every deck once when the match starts
+     bool refillManaEachRound = true;     // mana goes back to maxMana every round
+     int maxManaIncreasePerRound = 0;     // 0 = maxMana never grows (Sprint 1)
+-    int heroTurnTimeLimitSeconds = 0;    // hero turn timer (config only; timer comes in Sprint 2)
++    int heroTurnTimeLimitSeconds = 0;    // seconds a hero has for their turn; the server ends it automatically
++    int dmTurnTimeLimitSeconds = 0;      // same for the Dungeon Master (optional in rules.json, defaults to the hero value)
+     bool temporary = true;
+ };
+ 
+diff --git a/main.cpp b/main.cpp
+index 3391ad6..7d3ad12 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -11,6 +11,7 @@
+ #include <GLFW/glfw3.h>
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <cstdint>
+ #include <cstdio>
+ #include <exception>
+@@ -251,6 +252,12 @@ int main() {
+     bool bossOrder = false;    // DM: choosing a target for the final boss
+     std::string lastActive;            // whose turn it was in the last state (to notice a new turn)
+ 
++    // Turn timer display. The SERVER ends turns; the client only counts down from what it was told.
++    double turnEndsAt = 0.0;           // glfwGetTime() when the current turn runs out (0 = no timer)
++    int turnSecondsTotal = 0;
++    std::string infoText;              // e.g. "Kagan ran out of time" - survives the turn change below
++    double infoUntil = 0.0;
++
+     auto clearSelection = [&] {
+         selectedCard = -1;
+         selectedMonster = -1;
+@@ -265,6 +272,7 @@ int main() {
+         state = nullptr;
+         clearSelection();
+         lastActive.clear();
++        turnEndsAt = 0.0; turnSecondsTotal = 0; infoText.clear();
+     };
+ 
+     auto startConnecting = [&](const std::string& address, json request) {
+@@ -308,6 +316,9 @@ int main() {
+                 screen = OnlineScreen::Lobby;
+             } else if (type == net::msg::STATE) {
+                 state = message;
++                turnSecondsTotal = intOr(message, "turnSeconds");
++                // Use our own clock plus the time left the server reported: no clock syncing needed.
++                turnEndsAt = turnSecondsTotal > 0 ? glfwGetTime() + intOr(message, "turnMsLeft") / 1000.0 : 0.0;
+                 hostId = strOr(message, "host", hostId);
+                 screen = OnlineScreen::Battle;
+                 const std::string active = message["active"].is_string() ? message["active"].get<std::string>() : "";
+@@ -316,6 +327,9 @@ int main() {
+                     clearSelection();
+                     notice.clear(); // an old hint/error must not stay on screen into the next turn (SCRUM-40)
+                 }
++            } else if (type == net::msg::INFO) {
++                infoText = strOr(message, "msg");
++                infoUntil = glfwGetTime() + 4.0; // show it for 4 seconds
+             } else if (type == net::msg::ERROR) {
+                 notice = strOr(message, "msg");
+                 if (screen == OnlineScreen::Connecting) backToMenu(notice);
+@@ -545,6 +559,26 @@ int main() {
+                 ImGui::SameLine();
+                 if (ImGui::Button("End turn")) { client.send({{"t", net::msg::END}}); clearSelection(); }
+             }
++
++            // ---- Turn countdown (everyone sees it; the server ends the turn at 0)
++            if (turnEndsAt > 0.0 && !finished) {
++                const double left = std::max(0.0, turnEndsAt - glfwGetTime());
++                const int secondsLeft = static_cast<int>(std::ceil(left));
++                char clock[16];
++                std::snprintf(clock, sizeof(clock), "%d:%02d", secondsLeft / 60, secondsLeft % 60);
++                const ImVec4 colour = secondsLeft <= 10 ? ImVec4(0.90f, 0.20f, 0.15f, 1.0f)   // red: hurry
++                                    : secondsLeft <= 20 ? ImVec4(0.95f, 0.60f, 0.10f, 1.0f)   // orange
++                                                        : ImVec4(0.30f, 0.70f, 0.35f, 1.0f);  // green
++                ImGui::SameLine();
++                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, colour);
++                ImGui::ProgressBar(static_cast<float>(left / turnSecondsTotal), ImVec2(110, 0), clock);
++                ImGui::PopStyleColor();
++                if (myTurn && secondsLeft <= 10) {
++                    ImGui::SameLine();
++                    ImGui::TextColored(colour, "Hurry!");
++                }
++            }
++
+             ImGui::SameLine();
+             ImGui::TextDisabled("| DM: %s%s", strOr(dm, "name").c_str(), iAmDm ? " (you)" : "");
+             if (iAmDm && dm.contains("mana")) {
+@@ -570,6 +604,10 @@ int main() {
+                 else instruction = "Click a monster to attack.";
+             }
+             ImGui::TextUnformatted(instruction.c_str());
++            if (!infoText.empty() && glfwGetTime() < infoUntil) {
++                ImGui::SameLine();
++                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.30f, 1.0f), "  %s", infoText.c_str());
++            }
+             if (iAmDm && myTurn && state.value("canBossAttack", false)) {
+                 ImGui::SameLine();
+                 if (ImGui::SmallButton("Boss attack")) { clearSelection(); bossOrder = true; }
+diff --git a/net/PROTOCOL.md b/net/PROTOCOL.md
+index c1e65b1..288d69b 100644
+--- a/net/PROTOCOL.md
++++ b/net/PROTOCOL.md
+@@ -42,17 +42,23 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
+ | `state`  | see below                                 | sent to each player after every change |
+ | `error`  | `msg`                                     | your request was rejected (wrong turn, not enough mana, ...) |
+ | `closed` | `msg`                                     | room closed |
++| `info`   | `msg`                                     | something everyone should see, e.g. "Kagan ran out of time - turn ended automatically" |
+ 
+ `state`: `code, you, host, role ("hero" | "dm"), round, phase, active (player id), winner (null | "HEROES" | "DUNGEON_MASTER"),
+ heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive, boss}],
+ dm{id, name, human, connected, mana*, maxMana*, deckSize*, queued*[{monster, hero, card}]}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
+-`cardsPlayed`, `canBossAttack*`. Fields marked * are only sent to the DM.
++`cardsPlayed`, `canBossAttack*`, `turnSeconds` (limit of the current turn, 0 = none), `turnMsLeft` (milliseconds left
++when the message was sent). Fields marked * are only sent to the DM.
+ 
+ ## Rules
+ 
+ - Players pick a role in the lobby. No role = the level's default hero (`defaultHeroes` in the level file).
+ - Heroes come from `heroes.json`, the DM's mana and deck from the `dungeonMaster` block in the level file.
+ - The DM's orders this turn are kept on the server (`dm.queued`) and carried out when the DM ends the turn (SCRUM-40).
++- **Turn timer:** every turn (heroes and DM) has a time limit from `rules.json` (`heroTurnTimeLimitSeconds`,
++  `dmTurnTimeLimitSeconds`, both 60). The server ends the turn when it runs out, exactly like End turn: a DM's orders
++  given so far are still carried out. Playing a card does not reset the timer. The client only shows a countdown
++  from `turnMsLeft`; clocks don't need to match. `dungeon_server <port> <data> <seconds>` overrides the limit for demos.
+ - No human DM = the computer plays the DM: each living monster attacks the weakest hero, and the boss attacks too.
+ - The final boss from the level file arrives in its `arrivalRound`; its health is `healthPerHero` x number of heroes.
+ - If the host leaves the lobby, the next player becomes host. If someone leaves during the match, their hero
+diff --git a/net/Protocol.h b/net/Protocol.h
+index fba50f1..653ba99 100644
+--- a/net/Protocol.h
++++ b/net/Protocol.h
+@@ -90,6 +90,7 @@ namespace msg {
+     inline constexpr const char* STATE  = "state";  // { round, phase, ... }        match state (only YOUR hand)
+     inline constexpr const char* ERROR  = "error";  // { msg }                      request was rejected
+     inline constexpr const char* CLOSED = "closed"; // { msg }                      room was closed
++    inline constexpr const char* INFO   = "info";   // { msg }                      something happened everyone should see (e.g. turn timed out)
+ }
+ 
+ } // namespace net
+diff --git a/server/RoomServer.cpp b/server/RoomServer.cpp
+index 9c7e831..58c2f4a 100644
+--- a/server/RoomServer.cpp
++++ b/server/RoomServer.cpp
+@@ -61,8 +61,8 @@ std::string readString(const json& message, const char* key) {
+ 
+ // ===================== Setup =====================
+ 
+-RoomServer::RoomServer(const GameData& data, std::uint16_t port)
+-    : gameData(data), rng(std::random_device{}()) {
++RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride)
++    : gameData(data), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
+     ENetAddress address{};
+     address.host = ENET_HOST_ANY; // listen on every network interface
+     address.port = port;
+@@ -91,6 +91,7 @@ void RoomServer::poll(std::uint32_t timeoutMs) {
+             default: break;
+         }
+     }
++    endExpiredTurns(); // the turn timer runs even when nobody sends anything
+     enet_host_flush(host);
+ }
+ 
+@@ -469,6 +470,62 @@ void RoomServer::playBotDungeonMaster(Match& match, DungeonMaster& dm) {
+     }
+ }
+ 
++// ===================== Turn timer =====================
++
++int RoomServer::turnLimitFor(const Player& player) const {
++    if (turnSecondsOverride > 0) return turnSecondsOverride;
++    const RulesDefinition& rules = gameData.getRules();
++    return dynamic_cast<const DungeonMaster*>(&player) ? rules.dmTurnTimeLimitSeconds : rules.heroTurnTimeLimitSeconds;
++}
++
++void RoomServer::restartTimerIfTurnChanged(Room& room) {
++    if (!room.match) return;
++    const Player* active = room.match->getActivePlayer();
++    if (!active || room.match->isFinished()) {
++        room.timedTurn.clear();
++        room.turnSeconds = 0;
++        return;
++    }
++    // The same player can be active again in the next round (one hero vs. the computer DM),
++    // so the round is part of the key.
++    const std::string turn = active->getPlayerId() + "#" + std::to_string(room.match->getRound());
++    if (turn == room.timedTurn) return; // same turn: playing a card does NOT give extra time
++    room.timedTurn = turn;
++    room.turnSeconds = turnLimitFor(*active);
++    room.turnDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(room.turnSeconds);
++}
++
++int RoomServer::millisecondsLeft(const Room& room) const {
++    if (room.turnSeconds <= 0) return 0;
++    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(room.turnDeadline - std::chrono::steady_clock::now());
++    return static_cast<int>(std::max<long long>(0, left.count()));
++}
++
++void RoomServer::endExpiredTurns() {
++    const auto now = std::chrono::steady_clock::now();
++    for (auto& [code, room] : rooms) {
++        if (!room.match || room.turnSeconds <= 0 || room.timedTurn.empty() || now < room.turnDeadline) continue;
++        Player* active = room.match->getActivePlayer();
++        if (!active || room.match->isFinished()) continue;
++
++        const std::string name = active->getName();
++        const bool dmTurnEnds = dynamic_cast<DungeonMaster*>(active) != nullptr;
++        try {
++            // Exactly what the End turn button does - a DM's orders given so far are still carried out.
++            room.match->endTurn(*active);
++        } catch (const std::exception& e) {
++            std::cerr << "Room " << code << ": could not end timed-out turn: " << e.what() << "\n";
++            room.turnSeconds = 0; // don't retry every poll
++            continue;
++        }
++        if (dmTurnEnds) room.queued = json::array();
++        std::cout << "Room " << code << ": " << name << " ran out of time\n";
++        skipBotAndAbsentTurns(room);
++        broadcastInfo(room, name + " ran out of time - turn ended automatically");
++        broadcastState(room); // also starts the next player's timer
++    }
++}
++
+ // ===================== Sending =====================
+ 
+ void RoomServer::send(ENetPeer* peer, const json& message) {
+@@ -489,7 +546,13 @@ void RoomServer::broadcastLobby(const Room& room) {
+     for (const auto& m : room.members) send(m.peer, message); // only this room's members
+ }
+ 
+-void RoomServer::broadcastState(const Room& room) {
++void RoomServer::broadcastInfo(const Room& room, const std::string& text) {
++    const json message = {{"t", net::msg::INFO}, {"msg", text}};
++    for (const auto& m : room.members) send(m.peer, message);
++}
++
++void RoomServer::broadcastState(Room& room) {
++    restartTimerIfTurnChanged(room); // every turn change ends up here, so the timer can never miss one
+     for (const auto& m : room.members)
+         if (m.peer) send(m.peer, stateFor(room, m)); // each member gets their own view
+ }
+@@ -564,6 +627,10 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
+                             {"maxHp", monster->getMaxHealth()}, {"alive", monster->isAlive()},
+                             {"boss", monster->isBoss()}});
+     state["monsters"] = monsters;
++
++    // Turn timer: the client counts down from this, but only the server ends the turn.
++    state["turnSeconds"] = room.turnSeconds;
++    state["turnMsLeft"] = millisecondsLeft(room);
+     return state;
+ }
+ 
+diff --git a/server/RoomServer.h b/server/RoomServer.h
+index 38edc7e..adb36af 100644
+--- a/server/RoomServer.h
++++ b/server/RoomServer.h
+@@ -11,6 +11,7 @@
+ // request, the server runs it through Match::apply (which validates it) and then sends every
+ // member the new state. Each member only receives THEIR OWN hand.
+ 
++#include <chrono>
+ #include <cstdint>
+ #include <map>
+ #include <memory>
+@@ -29,7 +30,9 @@
+ class RoomServer {
+ public:
+     // Listens on all network interfaces on 'port'. Throws std::runtime_error if the port is taken.
+-    RoomServer(const GameData& gameData, std::uint16_t port);
++    // Turn time limits come from rules.json; 'turnSecondsOverride' > 0 replaces them for every
++    // turn (used by the tests, and handy for a quick demo: dungeon_server 7777 <data> 15).
++    RoomServer(const GameData& gameData, std::uint16_t port, int turnSecondsOverride = 0);
+     ~RoomServer();
+     RoomServer(const RoomServer&) = delete;
+     RoomServer& operator=(const RoomServer&) = delete;
+@@ -53,6 +56,11 @@ private:
+         std::vector<Member> members;
+         std::unique_ptr<Match> match; // nullptr while waiting in the lobby
+         nlohmann::json queued = nlohmann::json::array(); // DM orders this turn {monster, hero, card} (SCRUM-40)
++
++        // Turn timer: whose turn it is ("<playerId>#<round>") and when it ends automatically.
++        std::string timedTurn;
++        int turnSeconds = 0;                                  // 0 = no limit
++        std::chrono::steady_clock::time_point turnDeadline{};
+         int nextMemberNumber = 1;
+     };
+ 
+@@ -66,6 +74,7 @@ private:
+     ENetHost* host = nullptr;
+     const GameData& gameData;
+     std::mt19937 rng;
++    int turnSecondsOverride = 0;
+     std::map<std::string, Room> rooms;                 // code -> room
+     std::unordered_map<ENetPeer*, PeerInfo> peers;     // every connected peer
+ 
+@@ -91,13 +100,20 @@ private:
+     std::string newRoomCode();
+     std::unique_ptr<Match> buildMatch(const Room& room);
+     void skipBotAndAbsentTurns(Room& room);
++
++    // Turn timer
++    int turnLimitFor(const Player& player) const;  // seconds; 0 = no limit
++    void restartTimerIfTurnChanged(Room& room);    // called before every state broadcast
++    void endExpiredTurns();                        // called in every poll()
++    int millisecondsLeft(const Room& room) const;
+     void playBotDungeonMaster(Match& match, DungeonMaster& dm); // queues attacks for the computer DM
+     DungeonMaster* activeDungeonMaster(Room& room, const Member& member);
+ 
+     void send(ENetPeer* peer, const nlohmann::json& message);
+     void sendError(ENetPeer* peer, const std::string& text);
+     void broadcastLobby(const Room& room);
+-    void broadcastState(const Room& room);
++    void broadcastState(Room& room);
++    void broadcastInfo(const Room& room, const std::string& text);
+     nlohmann::json stateFor(const Room& room, const Member& viewer) const;
+ };
+ 
+diff --git a/server/server_main.cpp b/server/server_main.cpp
+index 6a06079..74e387d 100644
+--- a/server/server_main.cpp
++++ b/server/server_main.cpp
+@@ -4,6 +4,7 @@
+ //   dungeon_server                     port 7777, data folder baked in by CMake
+ //   dungeon_server <port>
+ //   dungeon_server <port> <dataFolder>  use this on a cloud VM where the build path doesn't exist
++//   dungeon_server <port> <dataFolder> <seconds>  every turn lasts <seconds> (default: rules.json)
+ //
+ // Players on other networks connect to this machine's public IP (or domain) on UDP <port>.
+ 
+@@ -26,11 +27,13 @@ int main(int argc, char** argv) {
+     std::cout << std::unitbuf; // flush every line, so logs show up immediately (systemd, docker, files)
+     std::uint16_t port = net::DEFAULT_PORT;
+     std::string dataDir = GameData::defaultDataDirectory();
++    int turnSeconds = 0; // 0 = use the time limits from rules.json
+     try {
+         if (argc > 1) port = static_cast<std::uint16_t>(std::stoi(argv[1]));
+         if (argc > 2) dataDir = argv[2];
++        if (argc > 3) turnSeconds = std::stoi(argv[3]);
+     } catch (const std::exception&) {
+-        std::cerr << "Usage: dungeon_server [port] [dataFolder]\n";
++        std::cerr << "Usage: dungeon_server [port] [dataFolder] [turnSeconds]\n";
+         return 2;
+     }
+ 
+@@ -39,8 +42,9 @@ int main(int argc, char** argv) {
+ 
+     try {
+         GameData gameData(dataDir);
+-        RoomServer server(gameData, port);
++        RoomServer server(gameData, port, turnSeconds);
+         std::cout << "Dungeon Party server listening on UDP port " << port << " (Ctrl+C to stop)\n";
++        if (turnSeconds > 0) std::cout << "Every turn lasts " << turnSeconds << " seconds\n";
+         while (running) server.poll(100);
+         std::cout << "Shutting down\n";
+     } catch (const std::exception& e) {
+diff --git a/src/GameData.cpp b/src/GameData.cpp
+index 53deb43..2c874fd 100644
+--- a/src/GameData.cpp
++++ b/src/GameData.cpp
+@@ -384,6 +384,9 @@ void GameData::loadRules() {
+     rules.refillManaEachRound = readTrueFalse(root, "refillManaEachRound", fileName);
+     rules.maxManaIncreasePerRound = readNumber(root, "maxManaIncreasePerRound", 0, fileName);
+     rules.heroTurnTimeLimitSeconds = readNumber(root, "heroTurnTimeLimitSeconds", 1, fileName);
++    rules.dmTurnTimeLimitSeconds = root.contains("dmTurnTimeLimitSeconds")
++                                       ? readNumber(root, "dmTurnTimeLimitSeconds", 1, fileName)
++                                       : rules.heroTurnTimeLimitSeconds;
+     rules.temporary = readTrueFalse(root, "temporary", fileName);
+ }
+ 
+diff --git a/tests/net_tests.cpp b/tests/net_tests.cpp
+index 64882d1..fcda1df 100644
+--- a/tests/net_tests.cpp
++++ b/tests/net_tests.cpp
+@@ -108,6 +108,8 @@ int main() {
+         pump(server, all, [&] { return !host.lastOfType(net::msg::STATE).is_null() && !guest.lastOfType(net::msg::STATE).is_null(); });
+         json hostState = host.lastOfType(net::msg::STATE);
+         check(hostState["active"] == hostState["you"], "match starts on the host's turn");
++        check(hostState["turnSeconds"] == 60 && hostState["turnMsLeft"].get<int>() > 55000 &&
++              hostState["turnMsLeft"].get<int>() <= 60000, "turn timer uses the 60 seconds from rules.json");
+         check(stranger.countOfType(net::msg::STATE) == 0, "other room receives nothing from this match");
+         check(hostState["hand"].size() >= 1, "host sees their own hand");
+         // Hidden information: each client's "hand" matches THEIR hero's hand size, never someone else's.
+@@ -275,6 +277,84 @@ int main() {
+         for (const auto& m : round4["monsters"]) bossSeen = bossSeen || m["boss"] == true;
+         check(bossSeen, "final boss arrives in round 4");
+ 
++        // ===== Turn timer (a second server where every turn lasts 1 second) =====
++        RoomServer fastServer(data, TEST_PORT + 1, 1);
++        TestClient slowHero, slowGuest, dmTimer, timerHero;
++        std::vector<TestClient*> timed{&slowHero, &slowGuest, &dmTimer, &timerHero};
++        for (auto* c : timed) c->net.connect("127.0.0.1", TEST_PORT + 1);
++        pump(fastServer, timed, [&] {
++            for (auto* c : timed) if (c->net.status() != NetClient::Status::Connected) return false;
++            return true;
++        });
++
++        // Room 1: two heroes who never press anything
++        slowHero.net.send({{"t", net::msg::CREATE}, {"name", "Sleepy"}});
++        pump(fastServer, timed, [&] { return !slowHero.lastOfType(net::msg::JOINED).is_null(); });
++        slowGuest.net.send({{"t", net::msg::JOIN}, {"name", "Dozy"}, {"code", slowHero.lastOfType(net::msg::JOINED)["code"]}});
++        pump(fastServer, timed, [&] { return !slowGuest.lastOfType(net::msg::JOINED).is_null(); });
++        const std::string sleepyId = slowHero.lastOfType(net::msg::JOINED)["you"];
++        const std::string dozyId = slowGuest.lastOfType(net::msg::JOINED)["you"];
++        slowHero.net.send({{"t", net::msg::START}});
++        pump(fastServer, timed, [&] { return !slowGuest.lastOfType(net::msg::STATE).is_null(); });
++        json timedState = slowGuest.lastOfType(net::msg::STATE);
++        check(timedState["active"] == sleepyId && timedState["turnSeconds"] == 1 &&
++              timedState["turnMsLeft"].get<int>() > 0 && timedState["turnMsLeft"].get<int>() <= 1000,
++              "everyone receives the countdown for the active player's turn");
++
++        const auto turnStart = std::chrono::steady_clock::now();
++        pump(fastServer, timed, [&] { return slowGuest.lastOfType(net::msg::STATE)["active"] == dozyId; });
++        const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - turnStart).count();
++        check(waited >= 800, "the turn is NOT ended early (waited " + std::to_string(waited) + " ms)");
++        check(slowHero.lastOfType(net::msg::INFO)["msg"] == "Sleepy ran out of time - turn ended automatically",
++              "everyone is told that the turn timed out");
++        check(slowGuest.lastOfType(net::msg::STATE)["turnMsLeft"].get<int>() > 500, "the next player gets a fresh timer");
++
++        // The second hero also sleeps: the computer DM plays instantly and round 2 starts with the first hero
++        pump(fastServer, timed, [&] {
++            auto st = slowHero.lastOfType(net::msg::STATE);
++            return st["round"] == 2 && st["active"] == sleepyId;
++        });
++        check(true, "after both heroes time out, the computer DM plays and round 2 begins");
++
++        // Playing a card does not reset the timer
++        slowHero.received.clear();
++        slowHero.net.send({{"t", net::msg::PLAY}, {"card", 0}, {"target", 0}, {"targetType", "monster"}});
++        pump(fastServer, timed, [&] { return !slowHero.lastOfType(net::msg::STATE).is_null() || !slowHero.lastOfType(net::msg::ERROR).is_null(); });
++        if (!slowHero.lastOfType(net::msg::STATE).is_null())
++            check(slowHero.lastOfType(net::msg::STATE)["turnMsLeft"].get<int>() < 1000, "playing a card does not give extra time");
++
++        // Room 2: a human DM gives an order and then lets the timer run out - the order still happens
++        timerHero.net.send({{"t", net::msg::CREATE}, {"name", "Hero"}});
++        pump(fastServer, timed, [&] { return !timerHero.lastOfType(net::msg::JOINED).is_null(); });
++        dmTimer.net.send({{"t", net::msg::JOIN}, {"name", "SlowDM"}, {"code", timerHero.lastOfType(net::msg::JOINED)["code"]}});
++        pump(fastServer, timed, [&] { return !dmTimer.lastOfType(net::msg::JOINED).is_null(); });
++        dmTimer.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
++        pump(fastServer, timed, [&] {
++            auto lobby = timerHero.lastOfType(net::msg::LOBBY);
++            return !lobby.is_null() && lobby["players"].size() == 2 && lobby["players"][1]["role"] == "dm";
++        });
++        timerHero.net.send({{"t", net::msg::START}});
++        pump(fastServer, timed, [&] { return !timerHero.lastOfType(net::msg::STATE).is_null(); });
++        timerHero.received.clear();
++        timerHero.net.send({{"t", net::msg::END}});
++        pump(fastServer, timed, [&] {
++            auto st = dmTimer.lastOfType(net::msg::STATE);
++            return !st.is_null() && st["active"] == st["you"] && st["hand"].size() > 0;
++        });
++        json dmTurn = dmTimer.lastOfType(net::msg::STATE);
++        check(dmTurn["turnSeconds"] == 1, "the DM's turn is timed too");
++        int slash = -1;
++        for (std::size_t i = 0; i < dmTurn["hand"].size(); ++i)
++            if (dmTurn["hand"][i]["effect"] == "DM_ATTACK" && slash < 0) slash = static_cast<int>(i);
++        const int heroHp = dmTurn["heroes"][0]["hp"];
++        dmTimer.net.send({{"t", net::msg::COMMAND}, {"card", slash}, {"monster", 0}, {"hero", 0}});
++        pump(fastServer, timed, [&] {
++            auto st = timerHero.lastOfType(net::msg::STATE);
++            return !st.is_null() && st["round"] == 2;
++        });
++        check(timerHero.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < heroHp,
++              "when the DM times out, the orders already given are still carried out");
++
+         std::cout << "All network tests passed.\n";
+         return 0;
+     } catch (const std::exception& e) {
+diff --git a/tools/validate_data.cpp b/tools/validate_data.cpp
+index deaceed..2aeed07 100644
+--- a/tools/validate_data.cpp
++++ b/tools/validate_data.cpp
+@@ -117,7 +117,8 @@ void printRules(const RulesDefinition& rules) {
+               << "  shuffle deck at start:     " << (rules.shuffleDeckAtMatchStart ? "yes" : "no") << "\n"
+               << "  refill mana each round:    " << (rules.refillManaEachRound ? "yes" : "no") << "\n"
+               << "  max mana increase / round: " << rules.maxManaIncreasePerRound << "\n"
+-              << "  hero turn time limit:      " << rules.heroTurnTimeLimitSeconds << " s\n";
++              << "  hero turn time limit:      " << rules.heroTurnTimeLimitSeconds << " s\n"
++              << "  DM turn time limit:        " << rules.dmTurnTimeLimitSeconds << " s\n";
+ }
+ 
+ void printLevel(const LevelDefinition& level) {
+-- 
+2.43.0
+

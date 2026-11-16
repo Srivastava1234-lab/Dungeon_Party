@@ -8,6 +8,7 @@
 #include "DMCard.h"
 #include "Monster.h"
 #include "Trap.h"
+#include <string>
 
 class Match {
     std::string matchId;
@@ -35,6 +36,7 @@ class Match {
         Hero* target;
     };
     std::vector<MonsterAction> monsterActions;
+    const std::vector<std::string>& getActionLog() const;
 
 
 public:
@@ -57,6 +59,8 @@ public:
     bool canQueueBossAttack() const;
     void queueBossAttack(DungeonMaster& player, Hero& target);
     void queueMonsterAttack(DungeonMaster& player, Monster& monster, const Card& card, Hero& target);
+    std::vector<std::string> actionLog;
+    void addPublicLog(const std::string& message);
 };
 
 #endif

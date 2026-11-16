@@ -38,6 +38,7 @@ private:
     // Match alone authorizes actions; callers cannot bypass turn validation.
     void playCard(const Card& card, const std::vector<Targetable*>& targets);
     void discard(const Card& card);
+    std::vector<std::string> triggeredTrapMessages;
 };
 
 #endif

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -313,6 +314,12 @@ int main() {
     bool bossOrder = false;    // DM: choosing a target for the final boss
     std::string lastActive;    // whose turn it was in the last state (to notice a new turn)
 
+    // Turn timer display. The SERVER ends turns; the client only counts down from what it was told.
+    double turnEndsAt = 0.0;           // glfwGetTime() when the current turn runs out (0 = no timer)
+    int turnSecondsTotal = 0;
+    std::string infoText;              // e.g. "Kagan ran out of time" - survives the turn change below
+    double infoUntil = 0.0;
+
     auto clearSelection = [&] {
         selectedCard = -1;
         selectedMonster = -1;
@@ -336,6 +343,7 @@ int main() {
         activeSession.clear();
         clearSelection();
         lastActive.clear();
+        turnEndsAt = 0.0; turnSecondsTotal = 0; infoText.clear();
     };
 
     auto leaveAndBackToMenu = [&](const std::string& why) {
@@ -425,6 +433,9 @@ int main() {
                 screen = OnlineScreen::Lobby;
             } else if (type == net::msg::STATE) {
                 state = message;
+                turnSecondsTotal = intOr(message, "turnSeconds");
+                // Use our own clock plus the time left the server reported: no clock syncing needed.
+                turnEndsAt = turnSecondsTotal > 0 ? glfwGetTime() + intOr(message, "turnMsLeft") / 1000.0 : 0.0;
                 hostId = strOr(message, "host", hostId);
                 screen = OnlineScreen::Battle;
                 if (!state["winner"].is_null()) clearSessionFromDisk(); // finished match needs no reconnect
@@ -434,6 +445,9 @@ int main() {
                     clearSelection();
                     notice.clear(); // an old hint/error must not stay on screen into the next turn (SCRUM-40)
                 }
+            } else if (type == net::msg::INFO) {
+                infoText = strOr(message, "msg");
+                infoUntil = glfwGetTime() + 4.0; // show it for 4 seconds
             } else if (type == net::msg::ERROR) {
                 notice = strOr(message, "msg");
                 if (reconnecting) {
@@ -692,6 +706,26 @@ int main() {
                 ImGui::SameLine();
                 if (ImGui::Button("End turn")) { client.send({{"t", net::msg::END}}); clearSelection(); }
             }
+
+            // ---- Turn countdown (everyone sees it; the server ends the turn at 0)
+            if (turnEndsAt > 0.0 && !finished) {
+                const double left = std::max(0.0, turnEndsAt - glfwGetTime());
+                const int secondsLeft = static_cast<int>(std::ceil(left));
+                char clock[16];
+                std::snprintf(clock, sizeof(clock), "%d:%02d", secondsLeft / 60, secondsLeft % 60);
+                const ImVec4 colour = secondsLeft <= 10 ? ImVec4(0.90f, 0.20f, 0.15f, 1.0f)   // red: hurry
+                                    : secondsLeft <= 20 ? ImVec4(0.95f, 0.60f, 0.10f, 1.0f)   // orange
+                                                        : ImVec4(0.30f, 0.70f, 0.35f, 1.0f);  // green
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, colour);
+                ImGui::ProgressBar(static_cast<float>(left / turnSecondsTotal), ImVec2(110, 0), clock);
+                ImGui::PopStyleColor();
+                if (myTurn && secondsLeft <= 10) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(colour, "Hurry!");
+                }
+            }
+
             ImGui::SameLine();
             const bool dmOffline = boolOr(dm, "human", false) && !boolOr(dm, "connected", true);
             ImGui::TextDisabled("| DM: %s%s%s", strOr(dm, "name").c_str(), iAmDm ? " (you)" : "",
@@ -719,6 +753,10 @@ int main() {
                 else instruction = "Click a monster to attack.";
             }
             ImGui::TextUnformatted(instruction.c_str());
+            if (!infoText.empty() && glfwGetTime() < infoUntil) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.30f, 1.0f), "  %s", infoText.c_str());
+            }
             if (iAmDm && myTurn && state.value("canBossAttack", false)) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Boss attack")) { clearSelection(); bossOrder = true; }

@@ -44,17 +44,23 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 | `state`  | see below                                 | sent to each player after every change |
 | `error`  | `msg`                                     | your request was rejected (wrong turn, not enough mana, ...) |
 | `closed` | `msg`                                     | room closed |
+| `info`   | `msg`                                     | something everyone should see, e.g. "Kagan ran out of time - turn ended automatically" |
 
 `state`: `code, you, host, role ("hero" | "dm"), round, phase, active (player id), winner (null | "HEROES" | "DUNGEON_MASTER"),
 heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive, boss}],
 dm{id, name, human, connected, mana*, maxMana*, deckSize*, queued*[{monster, hero, card}]}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
-`cardsPlayed`, `canBossAttack*`. Fields marked * are only sent to the DM.
+`cardsPlayed`, `canBossAttack*`, `turnSeconds` (limit of the current turn, 0 = none), `turnMsLeft` (milliseconds left
+when the message was sent). Fields marked * are only sent to the DM.
 
 ## Rules & Reconnect
 
 - Players pick a role in the lobby. No role = the level's default hero (`defaultHeroes` in the level file).
 - Heroes come from `heroes.json`, the DM's mana and deck from the `dungeonMaster` block in the level file.
 - The DM's orders this turn are kept on the server (`dm.queued`) and carried out when the DM ends the turn (SCRUM-40).
+- **Turn timer:** every turn (heroes and DM) has a time limit from `rules.json` (`heroTurnTimeLimitSeconds`,
+  `dmTurnTimeLimitSeconds`, both 60). The server ends the turn when it runs out, exactly like End turn: a DM's orders
+  given so far are still carried out. Playing a card does not reset the timer. The client only shows a countdown
+  from `turnMsLeft`; clocks don't need to match. `dungeon_server <port> <data> <seconds>` overrides the limit for demos.
 - No human DM = the computer plays the DM: each living monster attacks the weakest hero, and the boss attacks too.
 - The final boss from the level file arrives in its `arrivalRound`; its health is `healthPerHero` x number of heroes.
 - If the host leaves or drops, the next connected player becomes host. If someone drops during the match, their hero

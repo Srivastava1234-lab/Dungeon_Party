@@ -34,6 +34,8 @@ public:
     // Listens on all network interfaces on 'port'. Throws std::runtime_error if the port is taken.
     RoomServer(const GameData& gameData, std::uint16_t port,
                std::chrono::seconds emptyRoomGrace = std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS));
+    // Turn time limits come from rules.json; 'turnSecondsOverride' > 0 replaces them for every
+    // turn (used by the tests, and handy for a quick demo: dungeon_server 7777 <data> 15).
     ~RoomServer();
     RoomServer(const RoomServer&) = delete;
     RoomServer& operator=(const RoomServer&) = delete;
@@ -58,6 +60,11 @@ private:
         std::vector<Member> members;
         std::unique_ptr<Match> match; // nullptr while waiting in the lobby
         nlohmann::json queued = nlohmann::json::array(); // DM orders this turn {monster, hero, card} (SCRUM-40)
+
+        // Turn timer: whose turn it is ("<playerId>#<round>") and when it ends automatically.
+        std::string timedTurn;
+        int turnSeconds = 0;                                  // 0 = no limit
+        std::chrono::steady_clock::time_point turnDeadline{};
         int nextMemberNumber = 1;
         std::optional<std::chrono::steady_clock::time_point> emptySince; // set when all players drop mid-match
     };
@@ -73,6 +80,7 @@ private:
     const GameData& gameData;
     std::chrono::seconds emptyRoomGrace;
     std::mt19937 rng;
+    int turnSecondsOverride = 0;
     std::map<std::string, Room> rooms;                 // code -> room
     std::unordered_map<ENetPeer*, PeerInfo> peers;     // every connected peer
 
@@ -100,13 +108,20 @@ private:
     std::string newRoomCode();
     std::unique_ptr<Match> buildMatch(const Room& room);
     void skipBotAndAbsentTurns(Room& room);
+
+    // Turn timer
+    int turnLimitFor(const Player& player) const;  // seconds; 0 = no limit
+    void restartTimerIfTurnChanged(Room& room);    // called before every state broadcast
+    void endExpiredTurns();                        // called in every poll()
+    int millisecondsLeft(const Room& room) const;
     void playBotDungeonMaster(Match& match, DungeonMaster& dm); // queues attacks for the computer DM
     DungeonMaster* activeDungeonMaster(Room& room, const Member& member);
 
     void send(ENetPeer* peer, const nlohmann::json& message);
     void sendError(ENetPeer* peer, const std::string& text);
     void broadcastLobby(const Room& room);
-    void broadcastState(const Room& room);
+    void broadcastState(Room& room);
+    void broadcastInfo(const Room& room, const std::string& text);
     nlohmann::json stateFor(const Room& room, const Member& viewer) const;
 };
 
