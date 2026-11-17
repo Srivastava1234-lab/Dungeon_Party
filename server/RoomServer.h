@@ -12,6 +12,7 @@
 // member the new state. Each member only receives THEIR OWN hand.
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <random>
@@ -29,7 +30,14 @@
 class RoomServer {
 public:
     // Listens on all network interfaces on 'port'. Throws std::runtime_error if the port is taken.
-    RoomServer(const GameData& gameData, std::uint16_t port);
+    struct ResultPlayer {
+        std::string id;
+        std::string name;
+        std::string role;
+    };
+    using ResultSink = std::function<void(const std::string&, Side, const std::vector<ResultPlayer>&)>;
+
+    RoomServer(const GameData& gameData, std::uint16_t port, ResultSink resultSink = {});
     ~RoomServer();
     RoomServer(const RoomServer&) = delete;
     RoomServer& operator=(const RoomServer&) = delete;
@@ -51,6 +59,7 @@ private:
         std::string code;
         std::string hostId;
         std::vector<Member> members;
+        bool resultSaved = false;
         std::unique_ptr<Match> match; // nullptr while waiting in the lobby
         nlohmann::json queued = nlohmann::json::array(); // DM orders this turn {monster, hero, card} (SCRUM-40)
         int nextMemberNumber = 1;
@@ -65,6 +74,7 @@ private:
     net::EnetLibrary enetLibrary; // must be constructed before 'host' and destroyed after it
     ENetHost* host = nullptr;
     const GameData& gameData;
+    ResultSink resultSink;
     std::mt19937 rng;
     std::map<std::string, Room> rooms;                 // code -> room
     std::unordered_map<ENetPeer*, PeerInfo> peers;     // every connected peer
@@ -97,7 +107,7 @@ private:
     void send(ENetPeer* peer, const nlohmann::json& message);
     void sendError(ENetPeer* peer, const std::string& text);
     void broadcastLobby(const Room& room);
-    void broadcastState(const Room& room);
+    void broadcastState(Room& room);
     nlohmann::json stateFor(const Room& room, const Member& viewer) const;
 };
 

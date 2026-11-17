@@ -148,7 +148,20 @@ foreach(case_name attack_damage invalid_targets monster_damage victory round_lim
 endforeach()
 
 add_executable(dungeon_server server/server_main.cpp)
-target_link_libraries(dungeon_server PRIVATE room_server)
+find_package(SQLite3 REQUIRED)
+set(match_results_migration "${CMAKE_CURRENT_SOURCE_DIR}/database/migrations/001_match_results.sql")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${match_results_migration}")
+file(READ "${match_results_migration}" match_results_sql)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/MatchResultsMigration.h"
+        "inline constexpr char matchResultsMigration[] = R\"SQL(${match_results_sql})SQL\";\n")
+target_sources(dungeon_server PRIVATE server/MatchResultStore.cpp)
+target_include_directories(dungeon_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(dungeon_server PRIVATE room_server SQLite::SQLite3)
+
+add_executable(match_result_tests tests/match_result_tests.cpp server/MatchResultStore.cpp)
+target_include_directories(match_result_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(match_result_tests PRIVATE room_server SQLite::SQLite3)
+add_test(NAME match_results_by_id COMMAND match_result_tests)
 
 # SCRUM-46 (partial): current DM attack cards and queued monster actions.
 add_executable(monster_card_tests

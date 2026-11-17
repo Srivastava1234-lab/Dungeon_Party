@@ -61,8 +61,8 @@ std::string readString(const json& message, const char* key) {
 
 // ===================== Setup =====================
 
-RoomServer::RoomServer(const GameData& data, std::uint16_t port)
-    : gameData(data), rng(std::random_device{}()) {
+RoomServer::RoomServer(const GameData& data, std::uint16_t port, ResultSink sink)
+    : gameData(data), resultSink(std::move(sink)), rng(std::random_device{}()) {
     ENetAddress address{};
     address.host = ENET_HOST_ANY; // listen on every network interface
     address.port = port;
@@ -269,7 +269,11 @@ void RoomServer::handleStart(ENetPeer* peer, Room& room, Member& member) {
 
 std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
     const LevelDefinition level = gameData.loadLevel(1);
-    auto match = std::make_unique<Match>(room.code, level.maxRounds);
+    std::random_device random;
+    std::uniform_int_distribution<int> digit(0, 15);
+    std::string matchId(32, '0');
+    for (char& c : matchId) c = "0123456789abcdef"[digit(random)];
+    auto match = std::make_unique<Match>(std::move(matchId), level.maxRounds);
 
     // Heroes: everyone who didn't pick DM. No role chosen = the level's default hero.
     int heroCount = 0;
@@ -489,7 +493,19 @@ void RoomServer::broadcastLobby(const Room& room) {
     for (const auto& m : room.members) send(m.peer, message); // only this room's members
 }
 
-void RoomServer::broadcastState(const Room& room) {
+void RoomServer::broadcastState(Room& room) {
+    if (const auto winner = room.match->getWinner(); winner && resultSink && !room.resultSaved) {
+        std::vector<ResultPlayer> players;
+        players.reserve(room.members.size());
+        for (const auto& member : room.members)
+            players.push_back({member.id, member.name, member.role});
+        try {
+            resultSink(room.match->getMatchId(), *winner, players);
+            room.resultSaved = true;
+        } catch (const std::exception& error) {
+            std::cerr << "Could not save match " << room.match->getMatchId() << ": " << error.what() << '\n';
+        }
+    }
     for (const auto& m : room.members)
         if (m.peer) send(m.peer, stateFor(room, m)); // each member gets their own view
 }

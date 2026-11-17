@@ -16,6 +16,7 @@
 #include "../net/Protocol.h"
 #include "GameData.h"
 #include "RoomServer.h"
+#include "MatchResultStore.h"
 
 namespace {
 std::atomic<bool> running{true};
@@ -26,11 +27,13 @@ int main(int argc, char** argv) {
     std::cout << std::unitbuf; // flush every line, so logs show up immediately (systemd, docker, files)
     std::uint16_t port = net::DEFAULT_PORT;
     std::string dataDir = GameData::defaultDataDirectory();
+    std::string databasePath = "match-results.sqlite";
     try {
         if (argc > 1) port = static_cast<std::uint16_t>(std::stoi(argv[1]));
         if (argc > 2) dataDir = argv[2];
+        if (argc > 3) databasePath = argv[3];
     } catch (const std::exception&) {
-        std::cerr << "Usage: dungeon_server [port] [dataFolder]\n";
+        std::cerr << "Usage: dungeon_server [port] [dataFolder] [databasePath]\n";
         return 2;
     }
 
@@ -39,7 +42,11 @@ int main(int argc, char** argv) {
 
     try {
         GameData gameData(dataDir);
-        RoomServer server(gameData, port);
+        MatchResultStore results(databasePath);
+        RoomServer server(gameData, port,
+                          [&results](const auto& matchId, Side winner, const auto& players) {
+                              results.save(matchId, winner, players);
+                          });
         std::cout << "Dungeon Party server listening on UDP port " << port << " (Ctrl+C to stop)\n";
         while (running) server.poll(100);
         std::cout << "Shutting down\n";
