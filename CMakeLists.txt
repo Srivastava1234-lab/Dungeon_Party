@@ -115,6 +115,7 @@ set(DUNGEON_PARTY_DEFAULT_SERVER "" CACHE STRING "Optional default server host[:
 add_executable(${PROJECT_NAME}
         main.cpp
         src/Renderer.cpp
+        src/Audio.cpp
         include/stb_image.h
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -128,6 +129,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         imgui
         nlohmann_json::nlohmann_json
 )
+if(UNIX AND NOT APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE dl pthread m) # miniaudio on Linux
+endif()
 target_compile_definitions(${PROJECT_NAME} PRIVATE
         DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         DUNGEON_PARTY_DEFAULT_SERVER="${DUNGEON_PARTY_DEFAULT_SERVER}"

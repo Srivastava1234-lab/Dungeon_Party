@@ -29,6 +29,8 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
+#include "Audio.h"
+
 #include "GameData.h"
 #include "NetClient.h"
 #include "Protocol.h"
@@ -75,7 +77,16 @@ LobbyRole roleFromId(const std::string& id) {
     if (id == net::DM_ROLE) return LobbyRole::DM;
     return LobbyRole::None;
 }
-
+// Voice lines played when a role card is clicked (AI voices, created by elevenlabs.io).
+const char* roleVoiceFile(LobbyRole role) {
+    switch (role) {
+        case LobbyRole::Warrior: return "assets/sounds/Warrior.mp3";
+        case LobbyRole::Healer:  return "assets/sounds/Healer.mp3";
+        case LobbyRole::Wizard:  return "assets/sounds/wizard.mp3";       //Not yet created, waiting for heros.json
+        case LobbyRole::DM:      return "assets/sounds/DM.mp3";
+        default:                 return nullptr;
+    }
+}
 enum class OnlineScreen { Start, Menu, Connecting, Lobby, Battle };
 
 HeroEffect effectFromName(const std::string& name) {
@@ -116,10 +127,10 @@ void drawRoomCode(const std::string& code, float fontScale) {
     if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(code.c_str());
 }
 
-void beginFullscreenWindow(const char* name, bool transparent = false) {
+void beginFullscreenWindow(const char* name, float bgAlpha = 1.0f) {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    if (transparent) ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::SetNextWindowBgAlpha(bgAlpha);
     ImGui::Begin(name, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
 }
@@ -134,7 +145,7 @@ void drawNotice(const std::string& notice) {
     if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
 }
 
-// Help popup, opened with the Help_Button.png button on the start and menu screens.
+// Pop up windows: help in lobby, and about us in start. 
 void drawHelpPopup() {
     ImGui::SetNextWindowSize(ImVec2(580, 0));
     if (ImGui::BeginPopupModal("How to play", nullptr, ImGuiWindowFlags_NoResize)) {
@@ -158,7 +169,68 @@ void drawHelpPopup() {
         ImGui::EndPopup();
     }
 }
+void drawAboutPopup() {
+    ImGui::SetNextWindowSize(ImVec2(600, 0));
+    if (ImGui::BeginPopupModal("Who are we?", nullptr, ImGuiWindowFlags_NoResize)) {
+        ImGui::TextWrapped("We are a team of seven Computer Science students at Technische Hochschule Ulm (THU). "
+                   "We built Dungeon Party as our Software Project in the Winter Semester 2026/27, "
+                   "working with OpenUP and Scrum.");
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Team");
+        
+        ImGui::BulletText("Suat Keles - Artwork");
+        ImGui::BulletText("Irma Mejric - Product Owner");
+        ImGui::BulletText("Hülya Bal - Game Data & Testing");
+        ImGui::BulletText("Akshat Srivastava - Scrum Master");
+        ImGui::BulletText("Taegan Rosin - Software Architect");
+        ImGui::BulletText("Giray Kagan Angin - Backend Developer");
+        ImGui::BulletText("Soroush Sadeghi - Frontend / UI Developer");
 
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Supervisor: Prof. Dr. Klaus Baer");
+        ImGui::TextUnformatted("Voices generated with elevenlabs.io");
+        ImGui::Spacing();
+        ImGui::TextWrapped("Dungeon Party: 3-6 heroes against one Dungeon Master, played over the network.");
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+// Wood-and-gold look shared by the menu screens (Start, Lobby).
+void pushMenuStyle() {
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.13f, 0.08f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.33f, 0.21f, 0.11f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.85f, 0.65f, 0.30f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 0.92f, 0.75f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.07f, 0.05f, 0.85f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2.0f);
+}
+
+void popMenuStyle() {
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(6);
+}
+// Width and height of a texture that is already on the GPU, in pixels.
+ImVec2 textureSize(GLuint texture) {
+    GLint width = 0, height = 0;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+    return ImVec2(static_cast<float>(width), static_cast<float>(height));
+}
+
+// Biggest size of an image that fits inside a box without stretching it.
+ImVec2 fitInside(ImVec2 image, ImVec2 box) {
+    if (image.x <= 0 || image.y <= 0) return box;
+    const float scaleX = box.x / image.x;
+    const float scaleY = box.y / image.y;
+    const float scale = scaleX < scaleY ? scaleX : scaleY;
+    return ImVec2(image.x * scale, image.y * scale);
+}
 } // namespace
 
 int main() {
@@ -190,6 +262,11 @@ int main() {
     ImGui::GetIO().IniFilename = nullptr;
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
+    initAudio(); // audio engine started
+    // --- Loading new fonts
+    ImGuiIO& fontIo = ImGui::GetIO();
+    fontIo.Fonts->AddFontDefault();   // keep the normal font for all other text
+    ImFont* titleFont = fontIo.Fonts->AddFontFromFileTTF("assets/fonts/Cinzel-Bold.ttf", 48.0f);
 
     // ---- Game data and artwork. Every picture path comes from the data files or assets/.
     std::unique_ptr<GameData> gameData;
@@ -217,10 +294,13 @@ int main() {
     }
     const GLuint battleBackground = loadTexture("assets/Level_1_Artwork.png");
     const GLuint menuBackground = loadTexture("assets/Menu_Background_AI_Generated.png");
+    const GLuint startBackground = loadTexture("assets/Start_Background_AI_Generated.jpg");
+    const GLuint lobbyBackground = loadTexture("assets/Lobby_Background_AI_Generated.jpg");
     const GLuint helpButton = loadTexture("assets/Help_Button.png");
     const GLuint heroesWinPicture = loadTexture("assets/Heroes_Win.png");
     const GLuint heroesLosePicture = loadTexture("assets/Heroes_Lose.png");
     const GLuint emptyCardPicture = loadTexture("assets/Empty_Card_Design.png"); // cards without their own art
+    const GLuint wizardPicture = loadTexture("assets/Wizard_Artwork_AI_Generated.png"); // TEMPORARY until Suat's final art
 
     auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) {
         auto it = textures.find(key);
@@ -229,6 +309,7 @@ int main() {
     auto roleTexture = [&](LobbyRole role) -> GLuint {
         if (role == LobbyRole::Warrior) return textureOr0(heroTextures, "warrior");
         if (role == LobbyRole::Healer) return textureOr0(heroTextures, "healer");
+        if (role == LobbyRole::Wizard) return wizardPicture;
         if (role == LobbyRole::DM) return textureOr0(monsterTextures, "Final Boss");
         return 0;
     };
@@ -485,19 +566,42 @@ int main() {
 
         // ================= SCREEN 1: Start =================
         if (screen == OnlineScreen::Start) {
-            drawBackground(menuBackground);
-            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            drawBackground(startBackground);
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.25f, io.DisplaySize.y * 0.40f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(400, 0));
-            ImGui::SetNextWindowBgAlpha(0.85f);
-            ImGui::Begin("Start", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-            ImGui::SetWindowFontScale(2.0f);
-            ImGui::TextUnformatted("DUNGEON PARTY");
+            ImGui::Begin("Start", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                               ImGuiWindowFlags_NoBackground);
             ImGui::SetWindowFontScale(1.0f);
+            ImGui::PushFont(titleFont);
+            const char* title = "DUNGEON PARTY";
+            float titleWidth = ImGui::CalcTextSize(title).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - titleWidth) * 0.5f);
+
+            ImVec2 titlePos = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                ImVec2(titlePos.x + 3, titlePos.y + 3), IM_COL32(0, 0, 0, 200), title);
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.45f, 1.0f), "%s", title);
+            ImGui::PopFont();
+
+            ImGui::Dummy(ImVec2(0, 12));
+            ImGui::SetWindowFontScale(1.5f);
             if (!dataErrorMessage.empty()) {
                 ImGui::TextWrapped("%s", dataErrorMessage.c_str());
-            } else if (ImGui::Button("Play", ImVec2(-1, 70))) {
-                screen = OnlineScreen::Menu;
-            }
+            } 
+            else
+            {
+                pushMenuStyle();
+                if(ImGui::Button("Play", ImVec2(-1, 50))) {
+                    screen = OnlineScreen::Menu;
+                }
+                ImGui::Dummy(ImVec2(0, 12));
+                if(ImGui::Button("About us", ImVec2(-1,50))){
+                    ImGui::OpenPopup("Who are we?");
+                }
+                ImGui::SetWindowFontScale(1.0f);
+                drawAboutPopup();
+                popMenuStyle();
+            } 
             ImGui::End();
         }
         // ================= SCREEN 2: Host / Join =================
@@ -622,62 +726,143 @@ int main() {
         }
         // ================= SCREEN 3: Lobby =================
         else if (screen == OnlineScreen::Lobby) {
-            drawBackground(menuBackground);
-            beginFullscreenWindow("Lobby", true);
-            drawRoomCode(roomCode, 2.0f); // top-left
+            drawBackground(lobbyBackground);
+            beginFullscreenWindow("Lobby", 0.0f);
+            pushMenuStyle();
+            ImGui::BeginChild("TopBar", ImVec2(0, 80), ImGuiChildFlags_Borders);
+            ImGui::PushFont(titleFont);
+            ImGui::SetWindowFontScale(0.6f);
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.45f, 1.0f), "Room %s", roomCode.c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopFont();
+            ImGui::SameLine();
+            if (ImGui::Button("Copy")) ImGui::SetClipboardText(roomCode.c_str());
+            ImGui::SameLine(ImGui::GetWindowWidth() - 130);
+            if (ImGui::Button("Leave", ImVec2(110, 36))) leaveAndBackToMenu("");
             if (localServer) {
-                ImGui::TextDisabled("Hosted on this computer. Same network: server address %s. Other networks: see ? in the menu.",
-                                    localAddress.empty() ? "(unknown - run ipconfig)" : localAddress.c_str());
+                ImGui::TextColored(ImVec4(0.80f, 0.75f, 0.65f, 1.0f),
+                                "Hosted on this computer. Same network: server address %s. Other networks: see ? in the menu.",
+                                localAddress.empty() ? "(unknown - run ipconfig)" : localAddress.c_str());
             }
-            ImGui::Separator();
+            ImGui::EndChild();
+            popMenuStyle();
 
             // Players and the roles the SERVER has confirmed
             LobbyRole myRole = LobbyRole::None;
             std::string dmTakenBy;
-            ImGui::Text("Players (%zu/%zu):", lobbyPlayers.size(), net::MAX_PLAYERS_PER_ROOM);
+            const ImVec4 gold(1.0f, 0.82f, 0.45f, 1.0f);
+            const ImVec4 cream(1.0f, 0.92f, 0.75f, 1.0f);
+            const float panelHeight = 0;  // shared-height
+            pushMenuStyle();
+            ImGui::BeginChild("Party", ImVec2(320, panelHeight), ImGuiChildFlags_Borders);
+            ImGui::PushFont(titleFont);
+            ImGui::SetWindowFontScale(0.5f);
+            ImGui::TextColored(gold, "Party %zu/%zu", lobbyPlayers.size(), net::MAX_PLAYERS_PER_ROOM);
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopFont();
+            ImGui::Separator();
+            ImGui::Spacing();
             for (const auto& p : lobbyPlayers) {
                 const std::string id = strOr(p, "id");
                 const LobbyRole role = roleFromId(strOr(p, "role"));
                 if (id == myId) myRole = role;
                 if (role == LobbyRole::DM && id != myId) dmTakenBy = strOr(p, "name");
-                ImGui::BulletText("%s - %s%s%s", strOr(p, "name").c_str(), roleName(role),
-                                  id == hostId ? "  (host)" : "", id == myId ? "  <- you" : "");
+                const ImVec4 color = (id == myId) ? gold : cream;
+                ImGui::TextColored(color, "%s%s", strOr(p, "name").c_str(), id == hostId ? " (host)" : "");
+                ImGui::SameLine(190);
+                ImGui::TextColored(color, "%s", roleName(role));
             }
-            ImGui::Spacing();
+            ImGui::EndChild();
+            popMenuStyle();
+            ImGui::SameLine();
+            pushMenuStyle();
+            ImGui::BeginChild("Roles", ImVec2(0, panelHeight), ImGuiChildFlags_Borders);
+            popMenuStyle();
 
             // ROLE CARDS (SCRUM-35, Soroush): clicking sends the role to the server.
-            ImGui::Text("Choose your role:");
+        
+            ImGui::PushFont(titleFont);
+            ImGui::SetWindowFontScale(0.5f);
+            ImGui::TextColored(gold, "Choose your role");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopFont();
+            ImGui::Spacing();
+
+            pushMenuStyle();
+            const ImVec2 cardSize(180, 260);
             const LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Healer, LobbyRole::Wizard, LobbyRole::DM};
             for (LobbyRole role : roles) {
                 const bool noHeroData = role == LobbyRole::Wizard; // no wizard in heroes.json yet
                 const bool locked = noHeroData || (role == LobbyRole::DM && !dmTakenBy.empty());
                 const bool chosen = role == myRole;
+
                 ImGui::BeginGroup();
                 ImGui::BeginDisabled(locked);
-                if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
-                const GLuint tex = roleTexture(role);
-                const bool clicked = tex ? ImGui::ImageButton(roleName(role), (ImTextureID)(intptr_t)tex, ImVec2(120, 140))
-                                         : ImGui::Button(roleName(role), ImVec2(128, 148));
-                if (chosen) ImGui::PopStyleColor();
+                if (chosen) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(1.0f, 0.85f, 0.35f, 1.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 4.0f);
+                }
+                ImGui::PushID(roleName(role));
+                const bool clicked = ImGui::Button("##card", cardSize);
+                ImGui::PopID();
+              
+
+                if (const GLuint tex = roleTexture(role)) {
+                    const ImVec2 cardMin = ImGui::GetItemRectMin();
+                    const ImVec2 picture = fitInside(textureSize(tex), ImVec2(cardSize.x - 16, cardSize.y - 16));
+                    const ImVec2 p0(cardMin.x + (cardSize.x - picture.x) * 0.5f, cardMin.y + (cardSize.y - picture.y) * 0.5f);
+                    ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)tex, p0, ImVec2(p0.x + picture.x, p0.y + picture.y),
+                                                        ImVec2(0, 0), ImVec2(1, 1), locked ? IM_COL32(255, 255, 255, 90) : IM_COL32_WHITE);
+                }
+                if (chosen) {
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor(3);
+                }
                 ImGui::EndDisabled();
-                ImGui::TextUnformatted(roleName(role));
-                if (noHeroData) ImGui::TextDisabled("coming soon");
-                else if (role == LobbyRole::DM && !dmTakenBy.empty()) ImGui::TextDisabled("taken by %s", dmTakenBy.c_str());
+
+                if (chosen) {
+                    ImGui::PushFont(titleFont);
+                    ImGui::SetWindowFontScale(0.4f);
+                }
+                const float nameWidth = ImGui::CalcTextSize(roleName(role)).x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cardSize.x - nameWidth) * 0.5f);
+                ImGui::TextColored(chosen ? gold : cream, "%s", roleName(role));
+                if (chosen) {
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::PopFont();
+                }
+                std::string status;
+                if (noHeroData) status = "coming soon";
+                else if (role == LobbyRole::DM && !dmTakenBy.empty()) status = "taken by " + dmTakenBy;
+                if (!status.empty()) {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cardSize.x - ImGui::CalcTextSize(status.c_str()).x) * 0.5f);
+                    ImGui::TextDisabled("%s", status.c_str());
+                }
                 ImGui::EndGroup();
-                if (clicked && !chosen) client.send({{"t", net::msg::ROLE}, {"role", roleId(role)}});
-                ImGui::SameLine(0, 18);
+
+                if (clicked && !chosen) {
+                    client.send({{"t", net::msg::ROLE}, {"role", roleId(role)}});
+                    if (const char* file = roleVoiceFile(role)) playVoice(projectPath(file));
+                }
+                ImGui::SameLine(0, 24);
             }
             ImGui::NewLine();
+            popMenuStyle();
             ImGui::Spacing();
-
+            pushMenuStyle();
+            const ImVec4 muted(0.80f, 0.75f, 0.65f, 1.0f);
             if (myId == hostId) {
-                if (ImGui::Button("Start match", ImVec2(200, 40))) client.send({{"t", net::msg::START}});
-                ImGui::SameLine();
-                ImGui::TextDisabled("No DM chosen = the computer plays the DM.");
+                ImGui::SetWindowFontScale(1.3f);
+                if (ImGui::Button("Start match", ImVec2(220, 48))) client.send({{"t", net::msg::START}});
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::TextColored(muted, "No DM chosen = the computer plays the DM.");
             } else {
-                ImGui::TextUnformatted("Waiting for the host to start...");
+                ImGui::TextColored(cream, "Waiting for the host to start...");
             }
-            if (ImGui::Button("Leave", ImVec2(100, 32))) leaveAndBackToMenu("");
+            popMenuStyle(); 
+            ImGui::EndChild();
             drawNotice(notice);
             ImGui::End();
         }
@@ -909,6 +1094,7 @@ int main() {
 
     client.disconnect();
     localServer.reset();
+    shutdownAudio(); 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
