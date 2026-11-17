@@ -16,4 +16,4 @@ sqlite3 -bail -cmd "PRAGMA foreign_keys = ON;" match-results.sqlite ".read datab
 
 Migration 001 expects version 0 and commits the schema and version 1 together.
 
-The dedicated server initializes the database at startup. It requires SQLite development files at build time. Pass an optional third argument to set the database path. The default is match-results.sqlite in the server working directory.
+The dedicated server initializes the database at startup. It requires SQLite development files at build time. Pass an optional fourth argument, after the port, data folder and turn duration to set the database path. The default is match-results.sqlite in the server working directory.

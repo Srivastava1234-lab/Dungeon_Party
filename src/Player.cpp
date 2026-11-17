@@ -61,6 +61,7 @@ void Player::discard(const Card& c) {
 }
 
 void Player::playCard(const Card& card, const std::vector<Targetable*>& targets) {
+    triggeredTrapMessages.clear();
     Hero* hero = dynamic_cast<Hero*>(this);
     const HeroCard* heroCard = dynamic_cast<const HeroCard*>(&card);
 
@@ -126,21 +127,42 @@ void Player::playCard(const Card& card, const std::vector<Targetable*>& targets)
             TrapEffect effect = triggeredTrap.value();
 
             if (effect == TrapEffect::DAMAGE) {
+                int healthBefore = hero->getHealth();
+                int shieldBefore = hero->getShield();
+
                 hero->takeDamage(10);
+
+                int healthLost = healthBefore - hero->getHealth();
+                int shieldLost = shieldBefore - hero->getShield();
+
+                triggeredTrapMessages.push_back(hero->getName() + " triggered a trap: " + std::to_string(healthLost) + " HP lost, " + std::to_string(shieldLost) + " shield absorbed.");
+
+                if (!hero->isAlive()) {
+                    triggeredTrapMessages.push_back(hero->getName() + " was defeated.");
+                }
 
             } else if (effect == TrapEffect::DISCARD) {
                 if (!hand.empty()) {
                     static std::mt19937 generator(std::random_device{}());
 
-                    std::uniform_int_distribution<std::size_t> pick(0, hand.size() - 1);
+                    std::uniform_int_distribution<std::size_t> pick(
+                        0, hand.size() - 1
+                    );
 
                     std::size_t cardIndex = pick(generator);
-
                     discard(*hand[cardIndex]);
+
+                    // Never reveal the discarded card's identity.
+                    triggeredTrapMessages.push_back(hero->getName() +" triggered a trap and discarded one card.");
+                } else {
+                    triggeredTrapMessages.push_back(hero->getName() + " triggered a discard trap, but had no cards left.");
                 }
 
             } else if (effect == TrapEffect::MANA_DRAIN) {
-                mana = std::max(0, mana - 10);
+                int manaLost = std::min(mana, 5);
+                mana -= manaLost;
+
+                triggeredTrapMessages.push_back(hero->getName() + " triggered a trap and lost " + std::to_string(manaLost) + " mana.");
             }
         }
     }

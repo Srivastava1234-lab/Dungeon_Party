@@ -166,7 +166,8 @@ Notes:
   "shuffleDeckAtMatchStart": true,
   "refillManaEachRound": true,
   "maxManaIncreasePerRound": 0,
-  "heroTurnTimeLimitSeconds": 30,
+  "heroTurnTimeLimitSeconds": 60,
+  "dmTurnTimeLimitSeconds": 60,
   "temporary": true
 }
 ```
@@ -178,7 +179,8 @@ Notes:
 | `shuffleDeckAtMatchStart` | true/false | required | Shuffle every deck once when the match starts |
 | `refillManaEachRound` | true/false | required | Mana goes back to `maxMana` every round |
 | `maxManaIncreasePerRound` | whole number | 0 or more | How much `maxMana` grows per round. `0` = it never grows (Sprint 1) |
-| `heroTurnTimeLimitSeconds` | whole number | 1 or more | Time limit of a hero turn. **Config only** – the timer is implemented in Sprint 2 |
+| `heroTurnTimeLimitSeconds` | whole number | 1 or more | Time limit of a hero turn. When it runs out, the server ends the turn automatically |
+| `dmTurnTimeLimitSeconds` | whole number | 1 or more | Time limit of the Dungeon Master's turn. Optional – if missing, the hero value is used |
 | `temporary` | true/false | required | `true` = values not final yet |
 
 ---

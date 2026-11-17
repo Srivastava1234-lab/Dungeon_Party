@@ -384,6 +384,9 @@ void GameData::loadRules() {
     rules.refillManaEachRound = readTrueFalse(root, "refillManaEachRound", fileName);
     rules.maxManaIncreasePerRound = readNumber(root, "maxManaIncreasePerRound", 0, fileName);
     rules.heroTurnTimeLimitSeconds = readNumber(root, "heroTurnTimeLimitSeconds", 1, fileName);
+    rules.dmTurnTimeLimitSeconds = root.contains("dmTurnTimeLimitSeconds")
+                                       ? readNumber(root, "dmTurnTimeLimitSeconds", 1, fileName)
+                                       : rules.heroTurnTimeLimitSeconds;
     rules.temporary = readTrueFalse(root, "temporary", fileName);
 }
 

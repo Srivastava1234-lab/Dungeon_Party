@@ -109,10 +109,13 @@ add_library(room_server STATIC server/RoomServer.cpp)
 target_include_directories(room_server PUBLIC server)
 target_link_libraries(room_server PUBLIC enet nlohmann_json::nlohmann_json game_logic game_data)
 
+set(DUNGEON_PARTY_DEFAULT_SERVER "" CACHE STRING "Optional default server host[:port] pre-filled in the client")
+
 # Main Unified Game Executable (Local + Listen Server Host + Online Join)
 add_executable(${PROJECT_NAME}
         main.cpp
         src/Renderer.cpp
+        src/Audio.cpp
         include/stb_image.h
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -126,8 +129,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         imgui
         nlohmann_json::nlohmann_json
 )
+if(UNIX AND NOT APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE dl pthread m) # miniaudio on Linux
+endif()
 target_compile_definitions(${PROJECT_NAME} PRIVATE
         DUNGEON_PARTY_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        DUNGEON_PARTY_DEFAULT_SERVER="${DUNGEON_PARTY_DEFAULT_SERVER}"
 )
 
 # Optional standalone executables & tests

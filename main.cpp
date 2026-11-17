@@ -11,10 +11,14 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -24,6 +28,8 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+
+#include "Audio.h"
 
 #include "GameData.h"
 #include "NetClient.h"
@@ -71,7 +77,16 @@ LobbyRole roleFromId(const std::string& id) {
     if (id == net::DM_ROLE) return LobbyRole::DM;
     return LobbyRole::None;
 }
-
+// Voice lines played when a role card is clicked (AI voices, created by elevenlabs.io).
+const char* roleVoiceFile(LobbyRole role) {
+    switch (role) {
+        case LobbyRole::Warrior: return "assets/sounds/Warrior.mp3";
+        case LobbyRole::Healer:  return "assets/sounds/Healer.mp3";
+        case LobbyRole::Wizard:  return "assets/sounds/Wizard.mp3";       //Not yet created, waiting for heros.json
+        case LobbyRole::DM:      return "assets/sounds/DM.mp3";
+        default:                 return nullptr;
+    }
+}
 enum class OnlineScreen { Start, Menu, Connecting, Lobby, Battle };
 
 HeroEffect effectFromName(const std::string& name) {
@@ -112,10 +127,10 @@ void drawRoomCode(const std::string& code, float fontScale) {
     if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(code.c_str());
 }
 
-void beginFullscreenWindow(const char* name, bool transparent = false) {
+void beginFullscreenWindow(const char* name, float bgAlpha = 1.0f) {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    if (transparent) ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::SetNextWindowBgAlpha(bgAlpha);
     ImGui::Begin(name, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
 }
@@ -130,17 +145,19 @@ void drawNotice(const std::string& notice) {
     if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
 }
 
-// Help popup, opened with the Help_Button.png button on the start and menu screens.
+// Pop up windows: help in lobby, and about us in start. 
 void drawHelpPopup() {
-    ImGui::SetNextWindowSize(ImVec2(560, 0));
+    ImGui::SetNextWindowSize(ImVec2(580, 0));
     if (ImGui::BeginPopupModal("How to play", nullptr, ImGuiWindowFlags_NoResize)) {
-        ImGui::TextWrapped("Hosting");
-        ImGui::BulletText("This computer: the game runs the server itself. Friends on the SAME\n"
+        ImGui::TextWrapped("Hosting & Connecting");
+        ImGui::BulletText("This computer: runs the server inside the game. Friends on the SAME\n"
                           "network join with the address shown in your lobby.");
-        ImGui::BulletText("A server: enter the address of a computer running dungeon_server\n"
-                          "(for example the team laptop). Use this to play across different networks.");
-        ImGui::BulletText("Different networks only work if that server is reachable: port\n"
-                          "forwarding of UDP 7777 on its router, or everyone in the same Tailscale network.");
+        ImGui::BulletText("A server (different networks): connect to a running dungeon_server\n"
+                          "(e.g. on a cloud VM, or forwarded via playit.gg / Tailscale).");
+        ImGui::BulletText("You can enter host:port (for example myserver.ply.gg:12345)\n"
+                          "directly in the Server address box.");
+        ImGui::BulletText("If your connection drops mid-match, the game automatically\n"
+                          "reconnects you to your seat.");
         ImGui::Spacing();
         ImGui::TextWrapped("Playing");
         ImGui::BulletText("Heroes: pick a card, then click a monster (or a hero for Heal).");
@@ -152,7 +169,68 @@ void drawHelpPopup() {
         ImGui::EndPopup();
     }
 }
+void drawAboutPopup() {
+    ImGui::SetNextWindowSize(ImVec2(600, 0));
+    if (ImGui::BeginPopupModal("Who are we?", nullptr, ImGuiWindowFlags_NoResize)) {
+        ImGui::TextWrapped("We are a team of seven Computer Science students at Technische Hochschule Ulm (THU). "
+                   "We built Dungeon Party as our Software Project in the Winter Semester 2026/27, "
+                   "working with OpenUP and Scrum.");
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Team");
+        
+        ImGui::BulletText("Suat Keles - Artwork");
+        ImGui::BulletText("Irma Mejric - Product Owner");
+        ImGui::BulletText("Hülya Bal - Game Data & Testing");
+        ImGui::BulletText("Akshat Srivastava - Scrum Master");
+        ImGui::BulletText("Taegan Rosin - Software Architect");
+        ImGui::BulletText("Giray Kagan Angin - Backend Developer");
+        ImGui::BulletText("Soroush Sadeghi - Frontend / UI Developer");
 
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Supervisor: Prof. Dr. Klaus Baer");
+        ImGui::TextUnformatted("Voices generated with elevenlabs.io");
+        ImGui::Spacing();
+        ImGui::TextWrapped("Dungeon Party: 3-6 heroes against one Dungeon Master, played over the network.");
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+// Wood-and-gold look shared by the menu screens (Start, Lobby).
+void pushMenuStyle() {
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.13f, 0.08f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.33f, 0.21f, 0.11f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.85f, 0.65f, 0.30f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 0.92f, 0.75f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.07f, 0.05f, 0.85f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2.0f);
+}
+
+void popMenuStyle() {
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(6);
+}
+// Width and height of a texture that is already on the GPU, in pixels.
+ImVec2 textureSize(GLuint texture) {
+    GLint width = 0, height = 0;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+    return ImVec2(static_cast<float>(width), static_cast<float>(height));
+}
+
+// Biggest size of an image that fits inside a box without stretching it.
+ImVec2 fitInside(ImVec2 image, ImVec2 box) {
+    if (image.x <= 0 || image.y <= 0) return box;
+    const float scaleX = box.x / image.x;
+    const float scaleY = box.y / image.y;
+    const float scale = scaleX < scaleY ? scaleX : scaleY;
+    return ImVec2(image.x * scale, image.y * scale);
+}
 } // namespace
 
 int main() {
@@ -184,6 +262,14 @@ int main() {
     ImGui::GetIO().IniFilename = nullptr;
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
+    initAudio(); // audio engine started
+    // --- Loading new fonts
+    ImGuiIO& fontIo = ImGui::GetIO();
+    fontIo.Fonts->AddFontDefault();   // keep the normal font for all other text
+    const std::string titleFontPath = projectPath("assets/fonts/Cinzel-Bold.ttf");
+    ImFont* titleFont = std::filesystem::exists(titleFontPath)
+        ? fontIo.Fonts->AddFontFromFileTTF(titleFontPath.c_str(), 48.0f)
+        : nullptr; // missing font: titles fall back to the default font instead of crashing
 
     // ---- Game data and artwork. Every picture path comes from the data files or assets/.
     std::unique_ptr<GameData> gameData;
@@ -211,10 +297,13 @@ int main() {
     }
     const GLuint battleBackground = loadTexture("assets/Level_1_Artwork.png");
     const GLuint menuBackground = loadTexture("assets/Menu_Background_AI_Generated.png");
+    const GLuint startBackground = loadTexture("assets/Start_Background_AI_Generated.jpg");
+    const GLuint lobbyBackground = loadTexture("assets/Lobby_Background_AI_Generated.jpg");
     const GLuint helpButton = loadTexture("assets/Help_Button.png");
     const GLuint heroesWinPicture = loadTexture("assets/Heroes_Win.png");
     const GLuint heroesLosePicture = loadTexture("assets/Heroes_Lose.png");
     const GLuint emptyCardPicture = loadTexture("assets/Empty_Card_Design.png"); // cards without their own art
+    const GLuint wizardPicture = loadTexture("assets/Wizard_Artwork_AI_Generated.png"); // TEMPORARY until Suat's final art
 
     auto textureOr0 = [](const std::map<std::string, GLuint>& textures, const std::string& key) {
         auto it = textures.find(key);
@@ -223,25 +312,83 @@ int main() {
     auto roleTexture = [&](LobbyRole role) -> GLuint {
         if (role == LobbyRole::Warrior) return textureOr0(heroTextures, "warrior");
         if (role == LobbyRole::Healer) return textureOr0(heroTextures, "healer");
+        if (role == LobbyRole::Wizard) return wizardPicture;
         if (role == LobbyRole::DM) return textureOr0(monsterTextures, "Final Boss");
         return 0;
     };
 
     // ---- Network state
+    struct ReconnectSession {
+        std::string address;
+        std::uint16_t port = net::DEFAULT_PORT;
+        std::string roomCode;
+        std::string token;
+        std::string playerName;
+        bool valid() const { return !address.empty() && !roomCode.empty() && !token.empty(); }
+        void clear() { address.clear(); port = net::DEFAULT_PORT; roomCode.clear(); token.clear(); playerName.clear(); }
+    };
+
+    const std::filesystem::path sessionFile = std::filesystem::temp_directory_path() / "dungeon_party_session.json";
+    auto saveSessionToDisk = [&](const ReconnectSession& s) {
+        if (!s.valid()) return;
+        std::ofstream out(sessionFile, std::ios::trunc);
+        if (!out) return;
+        out << json{{"address", s.address}, {"port", s.port}, {"code", s.roomCode},
+                    {"token", s.token}, {"name", s.playerName}}.dump();
+    };
+    auto clearSessionFromDisk = [&]() {
+        std::error_code ec;
+        std::filesystem::remove(sessionFile, ec);
+    };
+    auto loadSessionFromDisk = [&]() -> ReconnectSession {
+        ReconnectSession s;
+        std::ifstream in(sessionFile);
+        if (!in) return s;
+        json data = json::parse(in, nullptr, false);
+        if (!data.is_object()) return s;
+        s.address = strOr(data, "address");
+        s.port = static_cast<std::uint16_t>(std::clamp(intOr(data, "port", net::DEFAULT_PORT), 1, 65535));
+        s.roomCode = strOr(data, "code");
+        s.token = strOr(data, "token");
+        s.playerName = strOr(data, "name");
+        return s;
+    };
+
     std::unique_ptr<RoomServer> localServer; // only created when this player hosts on this computer
     NetClient client;
     OnlineScreen screen = OnlineScreen::Start;
-    json pendingRequest;  // "create" or "join", sent as soon as the connection is up
+    json pendingRequest;  // "create", "join", or "rejoin", sent as soon as the connection is up
     std::string notice;   // last error / info line shown to the player
     std::string roomCode, myId, hostId;
     json lobbyPlayers = json::array();
     json state;           // latest match state from the server
     const std::string localAddress = client.localNetworkAddress();
 
+    ReconnectSession activeSession; // current room (kept on unexpected drop for auto-reconnect)
+    ReconnectSession savedSession = loadSessionFromDisk(); // recovered if the app restarted mid-match
+    bool reconnecting = false;
+    int reconnectAttempts = 0;
+    constexpr int MAX_RECONNECT_ATTEMPTS = 10;
+    bool rejoinSentThisAttempt = false;
+    std::chrono::steady_clock::time_point nextReconnectAttempt{};
+
+    std::string defaultServer;
+    if (const char* envServer = std::getenv("DUNGEON_PARTY_SERVER")) defaultServer = net::trimWhitespace(envServer);
+#ifdef DUNGEON_PARTY_DEFAULT_SERVER
+    if (defaultServer.empty()) defaultServer = net::trimWhitespace(DUNGEON_PARTY_DEFAULT_SERVER);
+#endif
+
     char nameBuf[net::MAX_NAME_LENGTH + 1] = "Player";
-    char serverBuf[128] = "";       // address to JOIN
+    if (!savedSession.playerName.empty()) {
+        std::snprintf(nameBuf, sizeof(nameBuf), "%s", savedSession.playerName.c_str());
+    }
+    char serverBuf[128] = "";       // address to JOIN (supports host or host:port)
     char hostServerBuf[128] = "";   // address of a dedicated server to HOST on
-    int hostWhere = 0;              // 0 = this computer, 1 = a server
+    if (!defaultServer.empty()) {
+        std::snprintf(serverBuf, sizeof(serverBuf), "%s", defaultServer.c_str());
+        std::snprintf(hostServerBuf, sizeof(hostServerBuf), "%s", defaultServer.c_str());
+    }
+    int hostWhere = defaultServer.empty() ? 0 : 1; // 0 = this computer, 1 = a server
     int port = net::DEFAULT_PORT;
     char codeBuf[16] = "";
 
@@ -249,7 +396,13 @@ int main() {
     int selectedCard = -1;     // hand index
     int selectedMonster = -1;  // DM: the monster that will attack
     bool bossOrder = false;    // DM: choosing a target for the final boss
-    std::string lastActive;            // whose turn it was in the last state (to notice a new turn)
+    std::string lastActive;    // whose turn it was in the last state (to notice a new turn)
+
+    // Turn timer display. The SERVER ends turns; the client only counts down from what it was told.
+    double turnEndsAt = 0.0;           // glfwGetTime() when the current turn runs out (0 = no timer)
+    int turnSecondsTotal = 0;
+    std::string infoText;              // e.g. "Kagan ran out of time" - survives the turn change below
+    double infoUntil = 0.0;
 
     auto clearSelection = [&] {
         selectedCard = -1;
@@ -257,22 +410,49 @@ int main() {
         bossOrder = false;
     };
 
-    auto backToMenu = [&](const std::string& why) {
+    auto backToMenu = [&](const std::string& why, bool keepSavedSession = false) {
         client.disconnect();
         screen = OnlineScreen::Menu;
         notice = why;
         roomCode.clear(); myId.clear(); hostId.clear();
         state = nullptr;
+        pendingRequest = nullptr;
+        reconnecting = false;
+        reconnectAttempts = 0;
+        rejoinSentThisAttempt = false;
+        if (!keepSavedSession) {
+            savedSession.clear();
+            clearSessionFromDisk();
+        }
+        activeSession.clear();
         clearSelection();
         lastActive.clear();
+        turnEndsAt = 0.0; turnSecondsTotal = 0; infoText.clear();
     };
 
-    auto startConnecting = [&](const std::string& address, json request) {
+    auto leaveAndBackToMenu = [&](const std::string& why) {
+        if (client.status() == NetClient::Status::Connected) {
+            client.send({{"t", net::msg::LEAVE}});
+        }
+        backToMenu(why, false);
+    };
+
+    auto startConnecting = [&](const std::string& rawAddress, json request) {
         notice.clear();
-        if (!client.connect(address, static_cast<std::uint16_t>(port))) {
+        const auto fallbackPort = static_cast<std::uint16_t>(std::clamp(port, 1, 65535));
+        net::ServerEndpoint endpoint = net::parseServerEndpoint(rawAddress, fallbackPort);
+        const std::string resolvedHost = isThisComputer(endpoint.host) ? "127.0.0.1" : endpoint.host;
+        if (!client.connect(resolvedHost, endpoint.port)) {
             notice = client.lastError();
             return;
         }
+        activeSession.clear();
+        activeSession.address = resolvedHost;
+        activeSession.port = endpoint.port;
+        activeSession.playerName = nameBuf;
+        reconnecting = false;
+        reconnectAttempts = 0;
+        rejoinSentThisAttempt = false;
         pendingRequest = std::move(request);
         screen = OnlineScreen::Connecting;
     };
@@ -285,21 +465,50 @@ int main() {
 
         // ---- 2. Network client: once per frame, never blocks
         client.poll();
-        if (screen != OnlineScreen::Start && screen != OnlineScreen::Menu &&
-            client.status() == NetClient::Status::Disconnected) {
-            backToMenu(client.lastError().empty() ? "Disconnected" : client.lastError());
-        }
         if (screen == OnlineScreen::Connecting && client.status() == NetClient::Status::Connected &&
             !pendingRequest.is_null()) {
             client.send(pendingRequest);
             pendingRequest = nullptr;
         }
+
+        if (reconnecting) {
+            const auto now = std::chrono::steady_clock::now();
+            if (client.status() == NetClient::Status::Connected && !rejoinSentThisAttempt) {
+                if (state.is_object()) {
+                    // match already started, reclaim our seat with the token
+                    client.send({{"t", net::msg::REJOIN}, {"code", activeSession.roomCode}, {"token", activeSession.token}});
+                } else {
+                    // still in the lobby, join the room again by code
+                    client.send({{"t", net::msg::JOIN}, {"name", activeSession.playerName}, {"code", activeSession.roomCode}});
+                }
+                rejoinSentThisAttempt = true;
+            } else if (client.status() == NetClient::Status::Disconnected && now >= nextReconnectAttempt) {
+                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                    savedSession = activeSession;
+                    backToMenu("Lost connection. Click Reconnect to try again.", true);
+                } else {
+                    ++reconnectAttempts;
+                    rejoinSentThisAttempt = false;
+                    nextReconnectAttempt = now + std::chrono::seconds(2);
+                    client.connect(activeSession.address, activeSession.port);
+                }
+            }
+        }
+
+        bool closedByServer = false;
         for (const json& message : client.takeMessages()) {
             const std::string type = strOr(message, "t");
             if (type == net::msg::JOINED) {
                 roomCode = strOr(message, "code");
                 myId = strOr(message, "you");
-                screen = OnlineScreen::Lobby;
+                activeSession.roomCode = roomCode;
+                activeSession.token = strOr(message, "token", activeSession.token);
+                if (!localServer) saveSessionToDisk(activeSession);
+                savedSession.clear();
+                reconnecting = false;
+                reconnectAttempts = 0;
+                rejoinSentThisAttempt = false;
+                if (screen == OnlineScreen::Connecting) screen = OnlineScreen::Lobby;
                 notice.clear();
             } else if (type == net::msg::LOBBY) {
                 roomCode = strOr(message, "code", roomCode);
@@ -308,19 +517,46 @@ int main() {
                 screen = OnlineScreen::Lobby;
             } else if (type == net::msg::STATE) {
                 state = message;
+                turnSecondsTotal = intOr(message, "turnSeconds");
+                // Use our own clock plus the time left the server reported: no clock syncing needed.
+                turnEndsAt = turnSecondsTotal > 0 ? glfwGetTime() + intOr(message, "turnMsLeft") / 1000.0 : 0.0;
                 hostId = strOr(message, "host", hostId);
                 screen = OnlineScreen::Battle;
+                if (!state["winner"].is_null()) clearSessionFromDisk(); // finished match needs no reconnect
                 const std::string active = message["active"].is_string() ? message["active"].get<std::string>() : "";
                 if (active != lastActive) { // a new turn started: forget the old selection
                     lastActive = active;
                     clearSelection();
                     notice.clear(); // an old hint/error must not stay on screen into the next turn (SCRUM-40)
                 }
+            } else if (type == net::msg::INFO) {
+                infoText = strOr(message, "msg");
+                infoUntil = glfwGetTime() + 4.0; // show it for 4 seconds
             } else if (type == net::msg::ERROR) {
                 notice = strOr(message, "msg");
-                if (screen == OnlineScreen::Connecting) backToMenu(notice);
+                if (reconnecting) {
+                    // room gone or token rejected, stop retrying
+                    closedByServer = true;
+                    backToMenu(notice, false);
+                } else if (screen == OnlineScreen::Connecting) {
+                    closedByServer = true;
+                    backToMenu(notice, false);
+                }
             } else if (type == net::msg::CLOSED) {
-                backToMenu(strOr(message, "msg", "The room was closed"));
+                closedByServer = true;
+                backToMenu(strOr(message, "msg", "The room was closed"), false);
+            }
+        }
+
+        if (!closedByServer && !reconnecting && screen != OnlineScreen::Start && screen != OnlineScreen::Menu &&
+            client.status() == NetClient::Status::Disconnected) {
+            if ((screen == OnlineScreen::Lobby || screen == OnlineScreen::Battle) && activeSession.valid()) {
+                reconnecting = true;
+                reconnectAttempts = 0;
+                rejoinSentThisAttempt = false;
+                nextReconnectAttempt = std::chrono::steady_clock::now();
+            } else {
+                backToMenu(client.lastError().empty() ? "Disconnected" : client.lastError(), false);
             }
         }
 
@@ -333,19 +569,42 @@ int main() {
 
         // ================= SCREEN 1: Start =================
         if (screen == OnlineScreen::Start) {
-            drawBackground(menuBackground);
-            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            drawBackground(startBackground);
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.25f, io.DisplaySize.y * 0.40f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(400, 0));
-            ImGui::SetNextWindowBgAlpha(0.85f);
-            ImGui::Begin("Start", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-            ImGui::SetWindowFontScale(2.0f);
-            ImGui::TextUnformatted("DUNGEON PARTY");
+            ImGui::Begin("Start", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                               ImGuiWindowFlags_NoBackground);
             ImGui::SetWindowFontScale(1.0f);
+            ImGui::PushFont(titleFont);
+            const char* title = "DUNGEON PARTY";
+            float titleWidth = ImGui::CalcTextSize(title).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::GetContentRegionAvail().x - titleWidth) * 0.5f);
+
+            ImVec2 titlePos = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                ImVec2(titlePos.x + 3, titlePos.y + 3), IM_COL32(0, 0, 0, 200), title);
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.45f, 1.0f), "%s", title);
+            ImGui::PopFont();
+
+            ImGui::Dummy(ImVec2(0, 12));
+            ImGui::SetWindowFontScale(1.5f);
             if (!dataErrorMessage.empty()) {
                 ImGui::TextWrapped("%s", dataErrorMessage.c_str());
-            } else if (ImGui::Button("Play", ImVec2(-1, 70))) {
-                screen = OnlineScreen::Menu;
-            }
+            } 
+            else
+            {
+                pushMenuStyle();
+                if(ImGui::Button("Play", ImVec2(-1, 50))) {
+                    screen = OnlineScreen::Menu;
+                }
+                ImGui::Dummy(ImVec2(0, 12));
+                if(ImGui::Button("About us", ImVec2(-1,50))){
+                    ImGui::OpenPopup("Who are we?");
+                }
+                ImGui::SetWindowFontScale(1.0f);
+                drawAboutPopup();
+                popMenuStyle();
+            } 
             ImGui::End();
         }
         // ================= SCREEN 2: Host / Join =================
@@ -360,8 +619,8 @@ int main() {
                 ImGui::SetNextWindowPos(ImVec2(win.x * 0.5f, win.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
                 ImGui::SetNextWindowSize(ImVec2(420, 110));
                 ImGui::Begin("Connecting", nullptr, fixedFlags);
-                ImGui::TextUnformatted("Connecting ...");
-                if (ImGui::Button("Cancel", ImVec2(-1, 0))) backToMenu("");
+                ImGui::Text("Connecting to %s:%u ...", activeSession.address.c_str(), activeSession.port);
+                if (ImGui::Button("Cancel", ImVec2(-1, 0))) backToMenu("", false);
                 ImGui::End();
             } else {
                 ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -394,7 +653,7 @@ int main() {
 
                 // The two panels sit inside the empty parchment scrolls of Menu_Background_AI_Generated.png
                 const float panelW = win.x * 0.235f;
-                const float panelH = win.y * 0.40f;
+                const float panelH = win.y * 0.43f;
                 ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.85f, 0.70f, 0.40f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.80f, 0.50f, 1.0f));
@@ -411,19 +670,19 @@ int main() {
                 ImGui::RadioButton("A server", &hostWhere, 1);
                 if (hostWhere == 1) {
                     ImGui::SetNextItemWidth(-1);
-                    ImGui::InputTextWithHint("##hostserver", "Server address", hostServerBuf, sizeof(hostServerBuf));
+                    ImGui::InputTextWithHint("##hostserver", "Server host[:port]", hostServerBuf, sizeof(hostServerBuf));
                 } else {
-                    ImGui::TextWrapped("Other networks need port forwarding (see ?).");
+                    ImGui::TextWrapped("Same network only unless forwarded (see ?).");
                 }
                 ImGui::BeginDisabled(!nameFilled);
                 if (ImGui::Button("New Adventure", ImVec2(-1, 44))) {
                     const json create = {{"t", net::msg::CREATE}, {"name", nameBuf}};
-                    if (hostWhere == 1 && !isThisComputer(hostServerBuf)) {
+                    if (hostWhere == 1 && !isThisComputer(net::trimWhitespace(hostServerBuf))) {
                         startConnecting(hostServerBuf, create); // a dedicated dungeon_server somewhere else
                     } else {
                         if (!localServer && gameData) {
                             try {
-                                localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(port));
+                                localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(std::clamp(port, 1, 65535)));
                             } catch (const std::exception& e) {
                                 // Port already taken (e.g. another window on this computer is hosting):
                                 // we can still create a room on that server.
@@ -440,19 +699,28 @@ int main() {
                 ImGui::SetCursorPos(ImVec2(win.x * 0.71f, win.y * 0.35f));
                 ImGui::BeginChild("Join", ImVec2(panelW, panelH), true, ImGuiWindowFlags_NoBackground);
                 ImGui::TextUnformatted("JOIN A PARTY");
-                ImGui::TextWrapped("Enter the server address and the code you got from the host:");
+                ImGui::TextWrapped("Enter the server address and room code:");
                 ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##joinserver", "Server address", serverBuf, sizeof(serverBuf));
+                ImGui::InputTextWithHint("##joinserver", "Server host[:port]", serverBuf, sizeof(serverBuf));
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputInt("##port", &port);
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextWithHint("##code", "Room code", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
                 ImGui::BeginDisabled(!nameFilled);
                 if (ImGui::Button("Join", ImVec2(-1, 44))) {
-                    const std::string address = isThisComputer(serverBuf) ? "127.0.0.1" : serverBuf;
-                    startConnecting(address, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
+                    startConnecting(serverBuf, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
                 }
                 ImGui::EndDisabled();
+                if (savedSession.valid()) {
+                    ImGui::Spacing();
+                    if (ImGui::Button(("Reconnect to " + savedSession.roomCode).c_str(), ImVec2(-1, 36))) {
+                        const auto sessionCopy = savedSession;
+                        startConnecting(sessionCopy.address + ":" + std::to_string(sessionCopy.port),
+                                        {{"t", net::msg::REJOIN}, {"code", sessionCopy.roomCode}, {"token", sessionCopy.token}});
+                        activeSession = sessionCopy;
+                        savedSession = sessionCopy;
+                    }
+                }
                 ImGui::EndChild();
 
                 ImGui::PopStyleColor(6); // every pushed color must be popped
@@ -461,62 +729,143 @@ int main() {
         }
         // ================= SCREEN 3: Lobby =================
         else if (screen == OnlineScreen::Lobby) {
-            drawBackground(menuBackground);
-            beginFullscreenWindow("Lobby", true);
-            drawRoomCode(roomCode, 2.0f); // top-left
+            drawBackground(lobbyBackground);
+            beginFullscreenWindow("Lobby", 0.0f);
+            pushMenuStyle();
+            ImGui::BeginChild("TopBar", ImVec2(0, 80), ImGuiChildFlags_Borders);
+            ImGui::PushFont(titleFont);
+            ImGui::SetWindowFontScale(0.6f);
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.45f, 1.0f), "Room %s", roomCode.c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopFont();
+            ImGui::SameLine();
+            if (ImGui::Button("Copy")) ImGui::SetClipboardText(roomCode.c_str());
+            ImGui::SameLine(ImGui::GetWindowWidth() - 130);
+            if (ImGui::Button("Leave", ImVec2(110, 36))) leaveAndBackToMenu("");
             if (localServer) {
-                ImGui::TextDisabled("Hosted on this computer. Same network: server address %s. Other networks: see ? in the menu.",
-                                    localAddress.empty() ? "(unknown - run ipconfig)" : localAddress.c_str());
+                ImGui::TextColored(ImVec4(0.80f, 0.75f, 0.65f, 1.0f),
+                                "Hosted on this computer. Same network: server address %s. Other networks: see ? in the menu.",
+                                localAddress.empty() ? "(unknown - run ipconfig)" : localAddress.c_str());
             }
-            ImGui::Separator();
+            ImGui::EndChild();
+            popMenuStyle();
 
             // Players and the roles the SERVER has confirmed
             LobbyRole myRole = LobbyRole::None;
             std::string dmTakenBy;
-            ImGui::Text("Players (%zu/%zu):", lobbyPlayers.size(), net::MAX_PLAYERS_PER_ROOM);
+            const ImVec4 gold(1.0f, 0.82f, 0.45f, 1.0f);
+            const ImVec4 cream(1.0f, 0.92f, 0.75f, 1.0f);
+            const float panelHeight = 0;  // shared-height
+            pushMenuStyle();
+            ImGui::BeginChild("Party", ImVec2(320, panelHeight), ImGuiChildFlags_Borders);
+            ImGui::PushFont(titleFont);
+            ImGui::SetWindowFontScale(0.5f);
+            ImGui::TextColored(gold, "Party %zu/%zu", lobbyPlayers.size(), net::MAX_PLAYERS_PER_ROOM);
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopFont();
+            ImGui::Separator();
+            ImGui::Spacing();
             for (const auto& p : lobbyPlayers) {
                 const std::string id = strOr(p, "id");
                 const LobbyRole role = roleFromId(strOr(p, "role"));
                 if (id == myId) myRole = role;
                 if (role == LobbyRole::DM && id != myId) dmTakenBy = strOr(p, "name");
-                ImGui::BulletText("%s - %s%s%s", strOr(p, "name").c_str(), roleName(role),
-                                  id == hostId ? "  (host)" : "", id == myId ? "  <- you" : "");
+                const ImVec4 color = (id == myId) ? gold : cream;
+                ImGui::TextColored(color, "%s%s", strOr(p, "name").c_str(), id == hostId ? " (host)" : "");
+                ImGui::SameLine(190);
+                ImGui::TextColored(color, "%s", roleName(role));
             }
-            ImGui::Spacing();
+            ImGui::EndChild();
+            popMenuStyle();
+            ImGui::SameLine();
+            pushMenuStyle();
+            ImGui::BeginChild("Roles", ImVec2(0, panelHeight), ImGuiChildFlags_Borders);
+            popMenuStyle();
 
             // ROLE CARDS (SCRUM-35, Soroush): clicking sends the role to the server.
-            ImGui::Text("Choose your role:");
+        
+            ImGui::PushFont(titleFont);
+            ImGui::SetWindowFontScale(0.5f);
+            ImGui::TextColored(gold, "Choose your role");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopFont();
+            ImGui::Spacing();
+
+            pushMenuStyle();
+            const ImVec2 cardSize(180, 260);
             const LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Healer, LobbyRole::Wizard, LobbyRole::DM};
             for (LobbyRole role : roles) {
                 const bool noHeroData = role == LobbyRole::Wizard; // no wizard in heroes.json yet
                 const bool locked = noHeroData || (role == LobbyRole::DM && !dmTakenBy.empty());
                 const bool chosen = role == myRole;
+
                 ImGui::BeginGroup();
                 ImGui::BeginDisabled(locked);
-                if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
-                const GLuint tex = roleTexture(role);
-                const bool clicked = tex ? ImGui::ImageButton(roleName(role), (ImTextureID)(intptr_t)tex, ImVec2(120, 140))
-                                         : ImGui::Button(roleName(role), ImVec2(128, 148));
-                if (chosen) ImGui::PopStyleColor();
+                if (chosen) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(1.0f, 0.85f, 0.35f, 1.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 4.0f);
+                }
+                ImGui::PushID(roleName(role));
+                const bool clicked = ImGui::Button("##card", cardSize);
+                ImGui::PopID();
+              
+
+                if (const GLuint tex = roleTexture(role)) {
+                    const ImVec2 cardMin = ImGui::GetItemRectMin();
+                    const ImVec2 picture = fitInside(textureSize(tex), ImVec2(cardSize.x - 16, cardSize.y - 16));
+                    const ImVec2 p0(cardMin.x + (cardSize.x - picture.x) * 0.5f, cardMin.y + (cardSize.y - picture.y) * 0.5f);
+                    ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)tex, p0, ImVec2(p0.x + picture.x, p0.y + picture.y),
+                                                        ImVec2(0, 0), ImVec2(1, 1), locked ? IM_COL32(255, 255, 255, 90) : IM_COL32_WHITE);
+                }
+                if (chosen) {
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor(3);
+                }
                 ImGui::EndDisabled();
-                ImGui::TextUnformatted(roleName(role));
-                if (noHeroData) ImGui::TextDisabled("coming soon");
-                else if (role == LobbyRole::DM && !dmTakenBy.empty()) ImGui::TextDisabled("taken by %s", dmTakenBy.c_str());
+
+                if (chosen) {
+                    ImGui::PushFont(titleFont);
+                    ImGui::SetWindowFontScale(0.4f);
+                }
+                const float nameWidth = ImGui::CalcTextSize(roleName(role)).x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cardSize.x - nameWidth) * 0.5f);
+                ImGui::TextColored(chosen ? gold : cream, "%s", roleName(role));
+                if (chosen) {
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::PopFont();
+                }
+                std::string status;
+                if (noHeroData) status = "coming soon";
+                else if (role == LobbyRole::DM && !dmTakenBy.empty()) status = "taken by " + dmTakenBy;
+                if (!status.empty()) {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cardSize.x - ImGui::CalcTextSize(status.c_str()).x) * 0.5f);
+                    ImGui::TextDisabled("%s", status.c_str());
+                }
                 ImGui::EndGroup();
-                if (clicked && !chosen) client.send({{"t", net::msg::ROLE}, {"role", roleId(role)}});
-                ImGui::SameLine(0, 18);
+
+                if (clicked && !chosen) {
+                    client.send({{"t", net::msg::ROLE}, {"role", roleId(role)}});
+                    if (const char* file = roleVoiceFile(role)) playVoice(projectPath(file));
+                }
+                ImGui::SameLine(0, 24);
             }
             ImGui::NewLine();
+            popMenuStyle();
             ImGui::Spacing();
-
+            pushMenuStyle();
+            const ImVec4 muted(0.80f, 0.75f, 0.65f, 1.0f);
             if (myId == hostId) {
-                if (ImGui::Button("Start match", ImVec2(200, 40))) client.send({{"t", net::msg::START}});
-                ImGui::SameLine();
-                ImGui::TextDisabled("No DM chosen = the computer plays the DM.");
+                ImGui::SetWindowFontScale(1.3f);
+                if (ImGui::Button("Start match", ImVec2(220, 48))) client.send({{"t", net::msg::START}});
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::TextColored(muted, "No DM chosen = the computer plays the DM.");
             } else {
-                ImGui::TextUnformatted("Waiting for the host to start...");
+                ImGui::TextColored(cream, "Waiting for the host to start...");
             }
-            if (ImGui::Button("Leave", ImVec2(100, 32))) backToMenu("");
+            popMenuStyle(); 
+            ImGui::EndChild();
             drawNotice(notice);
             ImGui::End();
         }
@@ -545,14 +894,36 @@ int main() {
                 ImGui::SameLine();
                 if (ImGui::Button("End turn")) { client.send({{"t", net::msg::END}}); clearSelection(); }
             }
+
+            // ---- Turn countdown (everyone sees it; the server ends the turn at 0)
+            if (turnEndsAt > 0.0 && !finished) {
+                const double left = std::max(0.0, turnEndsAt - glfwGetTime());
+                const int secondsLeft = static_cast<int>(std::ceil(left));
+                char clock[16];
+                std::snprintf(clock, sizeof(clock), "%d:%02d", secondsLeft / 60, secondsLeft % 60);
+                const ImVec4 colour = secondsLeft <= 10 ? ImVec4(0.90f, 0.20f, 0.15f, 1.0f)   // red: hurry
+                                    : secondsLeft <= 20 ? ImVec4(0.95f, 0.60f, 0.10f, 1.0f)   // orange
+                                                        : ImVec4(0.30f, 0.70f, 0.35f, 1.0f);  // green
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, colour);
+                ImGui::ProgressBar(static_cast<float>(left / turnSecondsTotal), ImVec2(110, 0), clock);
+                ImGui::PopStyleColor();
+                if (myTurn && secondsLeft <= 10) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(colour, "Hurry!");
+                }
+            }
+
             ImGui::SameLine();
-            ImGui::TextDisabled("| DM: %s%s", strOr(dm, "name").c_str(), iAmDm ? " (you)" : "");
+            const bool dmOffline = boolOr(dm, "human", false) && !boolOr(dm, "connected", true);
+            ImGui::TextDisabled("| DM: %s%s%s", strOr(dm, "name").c_str(), iAmDm ? " (you)" : "",
+                                dmOffline ? " [offline]" : "");
             if (iAmDm && dm.contains("mana")) {
                 ImGui::SameLine();
                 ImGui::Text("Mana %d/%d | Deck %d", intOr(dm, "mana"), intOr(dm, "maxMana"), intOr(dm, "deckSize"));
             }
             ImGui::SameLine(io.DisplaySize.x - 70);
-            if (ImGui::SmallButton("Leave")) backToMenu("");
+            if (ImGui::SmallButton("Leave")) leaveAndBackToMenu("");
             ImGui::EndChild();
 
             // ---- What to click next
@@ -570,6 +941,10 @@ int main() {
                 else instruction = "Click a monster to attack.";
             }
             ImGui::TextUnformatted(instruction.c_str());
+            if (!infoText.empty() && glfwGetTime() < infoUntil) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.30f, 1.0f), "  %s", infoText.c_str());
+            }
             if (iAmDm && myTurn && state.value("canBossAttack", false)) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Boss attack")) { clearSelection(); bossOrder = true; }
@@ -606,7 +981,7 @@ int main() {
                 std::string label = strOr(hero, "name");
                 if (strOr(hero, "id") == myId) label += " (you)";
                 if (strOr(hero, "id") == strOr(state, "active")) label += " *";
-                if (!boolOr(hero, "connected", true)) label += " [left]";
+                if (!boolOr(hero, "connected", true)) label += " [offline]";
                 const bool canTarget = myTurn && ((iAmDm && (selectedMonster >= 0 || bossOrder)) ||
                                                   (!iAmDm && selectedCard >= 0 && targetsHero(selectedEffect)));
                 ImGui::PushID(static_cast<int>(i));
@@ -695,9 +1070,24 @@ int main() {
                 const bool iWon = heroesWon != iAmDm;
                 ImGui::Text("%s win! %s", heroesWon ? "The heroes" : "The Dungeon Master", iWon ? "You won." : "You lost.");
                 ImGui::SetWindowFontScale(1.0f);
-                if (ImGui::Button("Back to menu", ImVec2(-1, 36))) backToMenu("");
+                if (ImGui::Button("Back to menu", ImVec2(-1, 36))) leaveAndBackToMenu("");
                 ImGui::End();
             }
+        }
+
+        if (reconnecting) {
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(420, 0));
+            ImGui::Begin("Reconnecting", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::SetWindowFontScale(1.3f);
+            ImGui::TextUnformatted("Connection lost");
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::TextWrapped("Reconnecting to room %s on %s:%u (attempt %d/%d)...",
+                               activeSession.roomCode.c_str(), activeSession.address.c_str(),
+                               activeSession.port, reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
+            if (ImGui::Button("Leave match", ImVec2(-1, 34))) leaveAndBackToMenu("");
+            ImGui::End();
         }
 
         ImGui::Render();
@@ -707,6 +1097,7 @@ int main() {
 
     client.disconnect();
     localServer.reset();
+    shutdownAudio(); 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
