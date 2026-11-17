@@ -82,7 +82,7 @@ const char* roleVoiceFile(LobbyRole role) {
     switch (role) {
         case LobbyRole::Warrior: return "assets/sounds/Warrior.mp3";
         case LobbyRole::Healer:  return "assets/sounds/Healer.mp3";
-        case LobbyRole::Wizard:  return "assets/sounds/wizard.mp3";       //Not yet created, waiting for heros.json
+        case LobbyRole::Wizard:  return "assets/sounds/Wizard.mp3";       //Not yet created, waiting for heros.json
         case LobbyRole::DM:      return "assets/sounds/DM.mp3";
         default:                 return nullptr;
     }
@@ -266,7 +266,10 @@ int main() {
     // --- Loading new fonts
     ImGuiIO& fontIo = ImGui::GetIO();
     fontIo.Fonts->AddFontDefault();   // keep the normal font for all other text
-    ImFont* titleFont = fontIo.Fonts->AddFontFromFileTTF("assets/fonts/Cinzel-Bold.ttf", 48.0f);
+    const std::string titleFontPath = projectPath("assets/fonts/Cinzel-Bold.ttf");
+    ImFont* titleFont = std::filesystem::exists(titleFontPath)
+        ? fontIo.Fonts->AddFontFromFileTTF(titleFontPath.c_str(), 48.0f)
+        : nullptr; // missing font: titles fall back to the default font instead of crashing
 
     // ---- Game data and artwork. Every picture path comes from the data files or assets/.
     std::unique_ptr<GameData> gameData;
