@@ -1,5 +1,7 @@
 #include "MatchResultStore.h"
 
+#include <filesystem>
+#include <random>
 #include <iostream>
 #include <stdexcept>
 
@@ -12,7 +14,11 @@ void check(bool passed, const char* message) {
 } // namespace
 
 int main() {
+    const auto directory = std::filesystem::temp_directory_path() /
+                           ("dungeon-results-" + std::to_string(std::random_device{}()));
+    const auto database = directory / "results.sqlite";
     try {
+        check(std::filesystem::create_directory(directory), "Could not create isolated test directory");
         MatchResultStore store(":memory:");
         store.save("match-1", Side::HEROES, {{"p2", "DM", "dm"}, {"p1", "First", "warrior"}});
         store.save("match-2", Side::DUNGEON_MASTER, {{"p1", "Second", "healer"}});
@@ -35,8 +41,44 @@ int main() {
         check(third && third->matchId == "match-3" && third->players.size() == 1 &&
                   third->players[0].name == "Third", "Third match must load independently");
         check(!store.load("missing"), "Unknown match ID must return no result");
+        bool rejected = false;
+        try {
+            store.save("match-1", Side::DUNGEON_MASTER, {{"p1", "Wrong", "dm"}});
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        check(rejected && store.load("match-1")->winner == Side::HEROES,
+              "A duplicate ID must not replace the original result");
+
+        rejected = false;
+        try {
+            store.save("failed", Side::HEROES, {{"p1", "A", "warrior"}, {"p1", "B", "healer"}});
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        check(rejected && !store.load("failed"), "An invalid player record must roll back the whole match");
+        store.save("failed", Side::HEROES, {{"p1", "Recovered", "warrior"}});
+        check(store.load("failed")->players[0].name == "Recovered",
+              "A failed save must leave the connection ready for a retry");
+
+        {
+            MatchResultStore disk(database.string());
+            disk.save("persisted", Side::HEROES, {{"p1", "Saved player", "warrior"}});
+        }
+        {
+            MatchResultStore reopened(database.string());
+            const auto saved = reopened.load("persisted");
+            check(saved && saved->winner == Side::HEROES && saved->players.size() == 1 &&
+                      saved->players[0].name == "Saved player",
+                  "Completed results must survive closing and reopening the database");
+        }
+        std::filesystem::remove(database);
+        std::filesystem::remove(directory);
         return 0;
     } catch (const std::exception& error) {
+        std::error_code ignored;
+        std::filesystem::remove(database, ignored);
+        std::filesystem::remove(directory, ignored);
         std::cerr << error.what() << '\n';
         return 1;
     }
