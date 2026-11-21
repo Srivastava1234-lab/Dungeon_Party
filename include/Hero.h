@@ -3,6 +3,7 @@
 #include "Player.h"
 #include "Targetable.h"
 #include "Types.h"
+#include "TimedEffects.h"
 #include <optional>
 
 class Hero : public Player, public Targetable{
@@ -14,6 +15,7 @@ private:
     bool manaTrapActive = false;
     int manaSpentForTrap = 0;
     TrapEffect activeTrapEffect = TrapEffect::DAMAGE;
+    TimedEffects timedEffects;
 
 public:
     Hero(std::string id, std::string name, HeroType type, int maxMana, bool bot = false);
@@ -31,6 +33,9 @@ public:
     void armManaTrap(TrapEffect effect);
     std::optional<TrapEffect> recordManaSpentForTrap(int amount);
     void clearManaTrap();
+    void addTimedEffect(TimedEffectType type, int value, int rounds);
+    const TimedEffects& getTimedEffects() const;
+    void tickEffects();
 };
 
 

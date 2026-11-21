@@ -127,3 +127,15 @@ void Hero::clearManaTrap() {
     manaTrapActive = false;
     manaSpentForTrap = 0;
 }
+
+void Hero::addTimedEffect(TimedEffectType type, int value, int rounds) {
+    timedEffects.add(type, value, rounds);
+}
+
+const TimedEffects& Hero::getTimedEffects() const {
+    return timedEffects;
+}
+
+void Hero::tickEffects() {
+    timedEffects.tick();
+}
