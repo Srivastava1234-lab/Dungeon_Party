@@ -986,6 +986,14 @@ int main() {
                             " (" + strOr(order, "card") + ")";
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1), "Orders: %s", list.c_str());
             }
+            // DM view (SCRUM-54): armed traps, only the DM's state contains them
+            const json traps = dm.value("traps", json::array());
+            if (iAmDm && !traps.empty()) {
+                std::string list;
+                for (const auto& trap : traps)
+                    list += (list.empty() ? "" : ", ") + strOr(trap, "type") + " on " + strOr(trap, "hero");
+                ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.95f, 1), "Traps: %s", list.c_str());
+            }
             drawNotice(notice);
 
             // ---- Battlefield

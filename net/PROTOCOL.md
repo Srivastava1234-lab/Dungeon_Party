@@ -48,9 +48,10 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 
 `state`: `code, you, host, role ("hero" | "dm"), round, phase, active (player id), winner (null | "HEROES" | "DUNGEON_MASTER"),
 heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive, boss}],
-dm{id, name, human, connected, mana*, maxMana*, deckSize*, queued*[{monster, hero, card}]}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
+dm{id, name, human, connected, mana*, maxMana*, deckSize*, queued*[{monster, hero, card}], traps*[{hero, type}]}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
 `cardsPlayed`, `canBossAttack*`, `turnSeconds` (limit of the current turn, 0 = none), `turnMsLeft` (milliseconds left
-when the message was sent). Fields marked * are only sent to the DM.
+when the message was sent). Fields marked * are only sent to the DM. `dm.traps` (SCRUM-54) lists the traps that are armed and not yet
+triggered, on every turn; heroes never receive it, and a triggered trap appears in the public action log.
 
 ## Rules & Reconnect
 

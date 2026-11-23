@@ -33,6 +33,8 @@ public:
     void armManaTrap(TrapEffect effect);
     std::optional<TrapEffect> recordManaSpentForTrap(int amount);
     void clearManaTrap();
+    bool hasManaTrap() const;          // SCRUM-54: read-only, for the DM's state
+    TrapEffect getTrapEffect() const;  // only meaningful while hasManaTrap()
     void addTimedEffect(TimedEffectType type, int value, int rounds);
     const TimedEffects& getTimedEffects() const;
     void tickEffects();
