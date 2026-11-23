@@ -8,12 +8,14 @@
 class Hero : public Player, public Targetable{
 private:
     int health;
+    int maxHealth;
     HeroType type;
     int attackReduction = 0;
     int shield = 0;
     bool manaTrapActive = false;
     int manaSpentForTrap = 0;
     TrapEffect activeTrapEffect = TrapEffect::DAMAGE;
+    
 
 public:
     Hero(std::string id, std::string name, HeroType type, int maxMana, bool bot = false);
@@ -31,6 +33,11 @@ public:
     void armManaTrap(TrapEffect effect);
     std::optional<TrapEffect> recordManaSpentForTrap(int amount);
     void clearManaTrap();
+    virtual int calculateShield(int baseAmount, bool targetingSelf) const;
+    virtual bool canHealAllies() const;
+    virtual bool canShieldAllies() const;
+    int getMaxHealth() const;
+    virtual std::string getClassName() const = 0;
 };
 
 

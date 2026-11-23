@@ -44,26 +44,44 @@ int main() {
     Monster* monsterView = monster.get();
 
     // Give both heroes attack cards.
-    for (int i = 0; i < 10; i++) {
-        hero->addToDeck(
-            std::make_unique<HeroCard>(
-                "Strike",
-                1,
-                HeroEffect::ATTACK,
-                6
-            )
-        );
+    // Give each hero five attack cards and five healing cards.
+for (int i = 0; i < 5; i++) {
+    hero->addToDeck(
+        std::make_unique<HeroCard>(
+            "Strike",
+            1,
+            HeroEffect::ATTACK,
+            6
+        )
+    );
 
-        secondHero->addToDeck(
-            std::make_unique<HeroCard>(
-                "Strike",
-                1,
-                HeroEffect::ATTACK,
-                6
-            )
-        );
-    }
+    hero->addToDeck(
+        std::make_unique<HeroCard>(
+            "Heal",
+            1,
+            HeroEffect::HEAL,
+            5
+        )
+    );
 
+    secondHero->addToDeck(
+        std::make_unique<HeroCard>(
+            "Strike",
+            1,
+            HeroEffect::ATTACK,
+            6
+        )
+    );
+
+    secondHero->addToDeck(
+        std::make_unique<HeroCard>(
+            "Heal",
+            1,
+            HeroEffect::HEAL,
+            5
+        )
+    );
+}
     // Give the DM monster attack cards.
     for (int i = 0; i < 10; i++) {
         dm->addToDeck(

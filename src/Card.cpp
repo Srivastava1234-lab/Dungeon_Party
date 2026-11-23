@@ -16,7 +16,7 @@ Card::Card(const std::string& n, int cost)
         } 
     }
 
-HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, std::optional<HeroClass> requiredClass, SupportTarget supportTarget) 
+HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, std::optional<std::string> requiredClass, SupportTarget supportTarget) 
     : Card(std::move(n), c), effect(e), value(v), requiredClass(requiredClass), supportTarget(supportTarget){
         if (v < 0){
             throw std::invalid_argument("negative effect value");
@@ -37,7 +37,7 @@ bool HeroCard::canBePlayedBy(const Player& player) const {
     }
 
     if (requiredClass.has_value()) {
-        if (hero->getType().heroClass != requiredClass.value()) {
+        if (hero->getClassName() != requiredClass.value()) {
             return false;
         }
     }

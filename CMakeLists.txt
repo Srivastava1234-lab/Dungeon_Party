@@ -95,6 +95,9 @@ add_library(game_logic STATIC
         src/Monster.cpp
         src/Player.cpp
         src/Trap.cpp
+        src/Warrior.cpp
+        src/Healer.cpp
+        src/Wizard.cpp
 )
 target_include_directories(game_logic PUBLIC include)
 target_link_libraries(game_logic PUBLIC nlohmann_json::nlohmann_json)
