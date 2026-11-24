@@ -23,7 +23,7 @@ GameState makeGameState(const Match& match, const DungeonMaster& dm, const Playe
             h->getName(),
             h->getType().heroClass,
             h->getHealth(),
-            h->getType().maxHealth,
+            h->getMaxHealth(),
             h->getMana(),
             h->getMaxMana(),
             h->getShield(),

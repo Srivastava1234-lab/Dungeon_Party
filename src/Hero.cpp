@@ -4,15 +4,13 @@
 #include <stdexcept>
 #include <utility>
 
-Hero::Hero(std::string id, std::string n, HeroType t, int m, bool b)
-    : Player(std::move(id), 
-    std::move(n), m, b), 
-    health(t.maxHealth),
-    type(t){
-        if(t.maxHealth <= 0){
-            throw std::invalid_argument("Hero needs positive hp");
-        }
-    } 
+Hero::Hero(std::string id, std::string name, HeroType heroType, int maxMana, bool bot)
+    : Player(std::move(id), std::move(name), maxMana, bot), health(heroType.maxHealth), maxHealth(heroType.maxHealth), type(heroType) {
+
+    if (maxHealth <= 0) {
+        throw std::invalid_argument("Hero needs positive HP");
+    }
+}
     
 bool Hero::acceptsCard(const Card& c) const{
     return dynamic_cast<const HeroCard*>(&c) && c.canBePlayedBy(*this);
@@ -43,10 +41,10 @@ void Hero::heal(int amount) {
         return;
     }
 
-    int missingHealth = type.maxHealth - health;
+    int missingHealth = maxHealth - health;
 
     if (amount > missingHealth) {
-        health = type.maxHealth;
+        health = maxHealth;
     } else {
         health += amount;
     }
@@ -128,22 +126,18 @@ void Hero::clearManaTrap() {
     manaSpentForTrap = 0;
 }
 
-bool Hero::hasManaTrap() const {
-    return manaTrapActive;
+int Hero::calculateShield(int baseAmount, bool targetingSelf) const {
+    return baseAmount;
 }
 
-TrapEffect Hero::getTrapEffect() const {
-    return activeTrapEffect;
+bool Hero::canHealAllies() const {
+    return false;
 }
 
-void Hero::addTimedEffect(TimedEffectType type, int value, int rounds) {
-    timedEffects.add(type, value, rounds);
+bool Hero::canShieldAllies() const {
+    return false;
 }
 
-const TimedEffects& Hero::getTimedEffects() const {
-    return timedEffects;
-}
-
-void Hero::tickEffects() {
-    timedEffects.tick();
+int Hero::getMaxHealth() const {
+    return maxHealth;
 }

@@ -7,6 +7,9 @@
 #include "../net/Protocol.h"
 #include "DMCard.h"
 #include "HeroCard.h"
+#include "Warrior.h"
+#include "Healer.h"
+#include "Wizard.h"
 
 using nlohmann::json;
 
@@ -402,7 +405,22 @@ std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
         const HeroDefinition& heroDef = gameData.getHero(heroId);
 
         // The Hero's playerId is the member id - that's how the server knows whose turn it is.
-        auto hero = std::make_unique<Hero>(member.id, member.name, heroDef.toHeroType(), heroDef.maxMana);
+        std::unique_ptr<Hero> hero;
+
+        if (heroDef.heroClass == HeroClass::WARRIOR) {
+            hero = std::make_unique<Warrior>(member.id, member.name, heroDef.maxHealth, heroDef.maxMana);
+
+        } else if (heroDef.heroClass == HeroClass::HEALER) {
+            hero = std::make_unique<Healer>(member.id, member.name, heroDef.maxHealth, heroDef.maxMana);
+
+        } else if (heroDef.heroClass == HeroClass::WIZARD) {
+            hero = std::make_unique<Wizard>(member.id, member.name, heroDef.maxHealth, heroDef.maxMana);
+
+        } else {
+            throw std::invalid_argument("This hero class has no subclass implemented");
+        }
+
+
         for (const auto& entry : heroDef.startingDeck) {
             const CardDefinition& card = gameData.getCard(entry.cardId);
             if (!card.heroEffect) continue;
@@ -744,7 +762,7 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
         for (const auto& m : room.members)
             if (m.id == hero->getPlayerId()) { connected = m.peer != nullptr; heroId = m.role; }
         heroes.push_back({{"id", hero->getPlayerId()}, {"name", hero->getName()}, {"heroId", heroId},
-                          {"hp", hero->getHealth()}, {"maxHp", hero->getType().maxHealth},
+                          {"hp", hero->getHealth()}, {"maxHp", hero->getMaxHealth()},
                           {"mana", hero->getMana()}, {"maxMana", hero->getMaxMana()},
                           {"handSize", hero->getHandSize()}, {"connected", connected}});
 

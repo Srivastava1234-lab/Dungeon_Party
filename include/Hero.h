@@ -9,13 +9,14 @@
 class Hero : public Player, public Targetable{
 private:
     int health;
+    int maxHealth;
     HeroType type;
     int attackReduction = 0;
     int shield = 0;
     bool manaTrapActive = false;
     int manaSpentForTrap = 0;
     TrapEffect activeTrapEffect = TrapEffect::DAMAGE;
-    TimedEffects timedEffects;
+    
 
 public:
     Hero(std::string id, std::string name, HeroType type, int maxMana, bool bot = false);
@@ -33,11 +34,11 @@ public:
     void armManaTrap(TrapEffect effect);
     std::optional<TrapEffect> recordManaSpentForTrap(int amount);
     void clearManaTrap();
-    bool hasManaTrap() const;          // SCRUM-54: read-only, for the DM's state
-    TrapEffect getTrapEffect() const;  // only meaningful while hasManaTrap()
-    void addTimedEffect(TimedEffectType type, int value, int rounds);
-    const TimedEffects& getTimedEffects() const;
-    void tickEffects();
+    virtual int calculateShield(int baseAmount, bool targetingSelf) const;
+    virtual bool canHealAllies() const;
+    virtual bool canShieldAllies() const;
+    int getMaxHealth() const;
+    virtual std::string getClassName() const = 0;
 };
 
 
