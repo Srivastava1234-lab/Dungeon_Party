@@ -25,6 +25,16 @@ const char* phaseName(Phase phase) {
     return "UNKNOWN";
 }
 
+// SCRUM-54: readable trap names for the DM view
+const char* trapName(TrapEffect effect) {
+    switch (effect) {
+        case TrapEffect::DAMAGE: return "Mana Trap";
+        case TrapEffect::DISCARD: return "Discard Trap";
+        case TrapEffect::MANA_DRAIN: return "Mana Drain Trap";
+    }
+    return "Trap";
+}
+
 const char* dmEffectName(DMEffect effect) {
     switch (effect) {
         case DMEffect::ATTACK: return "DM_ATTACK";
@@ -154,8 +164,21 @@ void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
 void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
     if (roomOf(peer)) return sendError(peer, "You are already in a room");
 
+    // The host picks the level. Missing field = level 1 (older clients).
+    int level = 1;
+    auto levelField = message.find("level");
+    if (levelField != message.end() && levelField->is_number_integer()) level = levelField->get<int>();
+    std::string levelName;
+    try {
+        levelName = gameData.loadLevel(level).name;
+    } catch (const std::exception&) {
+        return sendError(peer, "Level " + std::to_string(level) + " does not exist on this server");
+    }
+
     Room room;
     room.code = newRoomCode();
+    room.level = level;
+    room.levelName = levelName;
     Member host{peer, "p" + std::to_string(room.nextMemberNumber++),
                 net::sanitizeName(readString(message, "name")), "", net::generateReconnectToken(rng)};
     room.hostId = host.id;
@@ -357,7 +380,7 @@ void RoomServer::handleStart(ENetPeer* peer, Room& room, Member& member) {
 
     try {
         // Players who never picked a role play the level's default hero.
-        const std::string defaultHero = gameData.loadLevel(1).defaultHeroes.front();
+        const std::string defaultHero = gameData.loadLevel(room.level).defaultHeroes.front();
         for (auto& m : room.members)
             if (m.role.empty()) m.role = defaultHero;
         room.match = buildMatch(room);
@@ -370,7 +393,7 @@ void RoomServer::handleStart(ENetPeer* peer, Room& room, Member& member) {
 }
 
 std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
-    const LevelDefinition level = gameData.loadLevel(1);
+    const LevelDefinition level = gameData.loadLevel(room.level);
     auto match = std::make_unique<Match>(room.code, level.maxRounds);
 
     // Heroes: everyone who didn't pick DM. No role chosen = the level's default hero.
@@ -690,7 +713,8 @@ void RoomServer::sendError(ENetPeer* peer, const std::string& text) {
 void RoomServer::broadcastLobby(const Room& room) {
     json players = json::array();
     for (const auto& m : room.members) players.push_back({{"id", m.id}, {"name", m.name}, {"role", m.role}});
-    const json message = {{"t", net::msg::LOBBY}, {"code", room.code}, {"host", room.hostId}, {"players", players}};
+    const json message = {{"t", net::msg::LOBBY}, {"code", room.code}, {"host", room.hostId}, {"players", players},
+                          {"level", room.level}, {"levelName", room.levelName}};
     for (const auto& m : room.members) send(m.peer, message); // only this room's members
 }
 
@@ -757,6 +781,14 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
     }
     if (!state.contains("dm")) state["dm"] = {{"id", "dm"}, {"name", "Computer DM"}, {"human", false}, {"connected", true}};
     if (viewer.role == net::DM_ROLE) {
+        // SCRUM-54: armed traps are hidden information, so only the DM gets them.
+        // Sent on every turn, because traps trigger during the heroes' turns.
+        json traps = json::array();
+        for (const Hero* hero : match.getHeroes())
+            if (hero->hasManaTrap())
+                traps.push_back({{"hero", hero->getName()}, {"type", trapName(hero->getTrapEffect())}});
+        state["dm"]["traps"] = traps;
+
         if (const auto* dm = dynamic_cast<const DungeonMaster*>(active)) {
             state["hand"] = cardsOf(*dm);
             state["dm"]["mana"] = dm->getMana();

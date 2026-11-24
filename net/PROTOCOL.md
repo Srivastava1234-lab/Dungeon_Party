@@ -24,7 +24,7 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 
 | t        | fields              | notes                                       |
 |----------|---------------------|---------------------------------------------|
-| `create` | `name`              | make a room; you become host                |
+| `create` | `name`, (`level`)   | make a room; you become host. `level` = level number, default 1; rejected if that level file doesn't exist on the server |
 | `join`   | `name`, `code`      | join a room that hasn't started yet         |
 | `rejoin` | `code`, `token`     | reclaim a disconnected seat in an active match |
 | `role`   | `role`              | lobby: `"dm"` or a hero id (`"warrior"`, `"healer"`); only one DM per room |
@@ -40,7 +40,7 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 | t        | fields                                    | notes |
 |----------|-------------------------------------------|-------|
 | `joined` | `code`, `you`, `token`, (`rejoined`)      | you are in the room; `you` is your player id (`p1`, `p2`, ...); `token` allows reconnecting |
-| `lobby`  | `code`, `host`, `players[{id,name,role}]` | sent to the whole room whenever it changes |
+| `lobby`  | `code`, `host`, `players[{id,name,role}]`, `level`, `levelName` | sent to the whole room whenever it changes; `level`/`levelName` = the level the host chose |
 | `state`  | see below                                 | sent to each player after every change |
 | `error`  | `msg`                                     | your request was rejected (wrong turn, not enough mana, ...) |
 | `closed` | `msg`                                     | room closed |
@@ -48,9 +48,10 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 
 `state`: `code, you, host, role ("hero" | "dm"), round, phase, active (player id), winner (null | "HEROES" | "DUNGEON_MASTER"),
 heroes[{id, name, heroId, hp, maxHp, mana, maxMana, handSize, connected}], monsters[{name, hp, maxHp, alive, boss}],
-dm{id, name, human, connected, mana*, maxMana*, deckSize*, queued*[{monster, hero, card}]}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
+dm{id, name, human, connected, mana*, maxMana*, deckSize*, queued*[{monster, hero, card}], traps*[{hero, type}]}, hand[{name, cost, effect, value}]` (only yours; the DM's on their turn),
 `cardsPlayed`, `canBossAttack*`, `turnSeconds` (limit of the current turn, 0 = none), `turnMsLeft` (milliseconds left
-when the message was sent). Fields marked * are only sent to the DM.
+when the message was sent). Fields marked * are only sent to the DM. `dm.traps` (SCRUM-54) lists the traps that are armed and not yet
+triggered, on every turn; heroes never receive it, and a triggered trap appears in the public action log.
 
 ## Rules & Reconnect
 

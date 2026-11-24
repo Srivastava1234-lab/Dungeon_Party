@@ -1,0 +1,38 @@
+{
+  "_note": "TEMPORARY (SCRUM-63): copy of level 1 to test level selection. Replace with the real level 2 (Huelya, task 11).",
+  "number": 2,
+  "name": "Level 2 (TEMPORARY)",
+  "maxRounds": 8,
+  "boss": {
+    "monster": "final_boss",
+    "arrivalRound": 4
+  },
+  "defaultHeroes": [
+    "warrior"
+  ],
+  "monsters": [
+    {
+      "monster": "goblin",
+      "countPerHero": 1
+    }
+  ],
+  "temporary": true,
+  "dungeonMaster": {
+    "maxMana": 10,
+    "startingDeck": [
+      {
+        "card": "goblin_slash",
+        "count": 6
+      },
+      {
+        "card": "heavy_smash",
+        "count": 3
+      },
+      {
+        "card": "weakening_curse",
+        "count": 3
+      }
+    ],
+    "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
+  }
+}

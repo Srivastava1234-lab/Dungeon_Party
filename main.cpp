@@ -361,6 +361,7 @@ int main() {
     std::string notice;   // last error / info line shown to the player
     std::string roomCode, myId, hostId;
     json lobbyPlayers = json::array();
+    std::string lobbyLevelName; // SCRUM-63: level chosen by the host, sent by the server
     json state;           // latest match state from the server
     const std::string localAddress = client.localNetworkAddress();
 
@@ -389,6 +390,20 @@ int main() {
         std::snprintf(hostServerBuf, sizeof(hostServerBuf), "%s", defaultServer.c_str());
     }
     int hostWhere = defaultServer.empty() ? 0 : 1; // 0 = this computer, 1 = a server
+
+    // SCRUM-63: levels the host can pick. Filled once by loading level_1, level_2, ...
+    // until a file is missing, so new level files show up without code changes.
+    std::vector<std::pair<int, std::string>> levelChoices; // {number, name}
+    if (gameData) {
+        for (int n = 1;; ++n) {
+            try {
+                levelChoices.push_back({n, gameData->loadLevel(n).name});
+            } catch (const std::exception&) {
+                break;
+            }
+        }
+    }
+    int levelIndex = 0; // index into levelChoices
     int port = net::DEFAULT_PORT;
     char codeBuf[16] = "";
 
@@ -514,6 +529,7 @@ int main() {
                 roomCode = strOr(message, "code", roomCode);
                 hostId = strOr(message, "host");
                 lobbyPlayers = message.value("players", json::array());
+                lobbyLevelName = strOr(message, "levelName");
                 screen = OnlineScreen::Lobby;
             } else if (type == net::msg::STATE) {
                 state = message;
@@ -674,9 +690,20 @@ int main() {
                 } else {
                     ImGui::TextWrapped("Same network only unless forwarded (see ?).");
                 }
+                // SCRUM-63: level picker (only the host sees it)
+                if (!levelChoices.empty()) {
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::BeginCombo("##level", levelChoices[levelIndex].second.c_str())) {
+                        for (int i = 0; i < static_cast<int>(levelChoices.size()); ++i) {
+                            if (ImGui::Selectable(levelChoices[i].second.c_str(), i == levelIndex)) levelIndex = i;
+                        }
+                        ImGui::EndCombo();
+                    }
+                }
                 ImGui::BeginDisabled(!nameFilled);
                 if (ImGui::Button("New Adventure", ImVec2(-1, 44))) {
-                    const json create = {{"t", net::msg::CREATE}, {"name", nameBuf}};
+                    const int chosenLevel = levelChoices.empty() ? 1 : levelChoices[levelIndex].first;
+                    const json create = {{"t", net::msg::CREATE}, {"name", nameBuf}, {"level", chosenLevel}};
                     if (hostWhere == 1 && !isThisComputer(net::trimWhitespace(hostServerBuf))) {
                         startConnecting(hostServerBuf, create); // a dedicated dungeon_server somewhere else
                     } else {
@@ -764,6 +791,7 @@ int main() {
             ImGui::SetWindowFontScale(1.0f);
             ImGui::PopFont();
             ImGui::Separator();
+            if (!lobbyLevelName.empty()) ImGui::TextColored(cream, "Level: %s", lobbyLevelName.c_str()); // SCRUM-63
             ImGui::Spacing();
             for (const auto& p : lobbyPlayers) {
                 const std::string id = strOr(p, "id");
@@ -957,6 +985,14 @@ int main() {
                     list += (list.empty() ? "" : ", ") + strOr(order, "monster") + " -> " + strOr(order, "hero") +
                             " (" + strOr(order, "card") + ")";
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1), "Orders: %s", list.c_str());
+            }
+            // DM view (SCRUM-54): armed traps, only the DM's state contains them
+            const json traps = dm.value("traps", json::array());
+            if (iAmDm && !traps.empty()) {
+                std::string list;
+                for (const auto& trap : traps)
+                    list += (list.empty() ? "" : ", ") + strOr(trap, "type") + " on " + strOr(trap, "hero");
+                ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.95f, 1), "Traps: %s", list.c_str());
             }
             drawNotice(notice);
 

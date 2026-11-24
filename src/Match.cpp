@@ -408,6 +408,11 @@ void Match::endTurn(Player& p) {
         // These orders must not run again next round.
         monsterActions.clear();
 
+        // SCRUM-55: the round is over, every timed effect loses one round.
+        for (std::size_t i = 0; i < heroes.size(); i++) {
+            heroes[i]->tickEffects();
+        }
+
         checkWinner();
         if (isFinished()){
              return;

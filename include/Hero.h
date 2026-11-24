@@ -3,6 +3,7 @@
 #include "Player.h"
 #include "Targetable.h"
 #include "Types.h"
+#include "TimedEffects.h"
 #include <optional>
 
 class Hero : public Player, public Targetable{

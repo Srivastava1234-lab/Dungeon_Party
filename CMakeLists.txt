@@ -170,6 +170,7 @@ add_executable(monster_card_tests
         src/Monster.cpp
         src/Player.cpp
         src/Trap.cpp
+        src/TimedEffects.cpp
 )
 target_include_directories(monster_card_tests PRIVATE include)
 foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end spell_targets frost_bolt scheduled_boss)
