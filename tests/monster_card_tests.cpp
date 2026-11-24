@@ -1,4 +1,5 @@
 #include "Match.h"
+#include "Warrior.h"
 #include "DMCard.h"
 #include "HeroCard.h"
 #include <iostream>
@@ -22,10 +23,10 @@ struct Battle {
     Monster* monster;
     Monster* reserve;
     explicit Battle(int mana = 10, bool secondHero = false, bool reserveIsBoss = false) {
-        auto h = std::make_unique<Hero>("hero", "Warrior", HeroType{HeroClass::WARRIOR, 30}, 10);
+        auto h = std::make_unique<Warrior>("hero", "Warrior", 30, 10);
         hero = h.get(); match.addPlayer(std::move(h));
         if (secondHero) {
-            auto other = std::make_unique<Hero>("other", "Other", HeroType{HeroClass::WARRIOR, 30}, 10);
+            auto other = std::make_unique<Warrior>("other", "Other", 30, 10);
             otherHero = other.get(); match.addPlayer(std::move(other));
         }
         auto d = std::make_unique<DungeonMaster>("dm", "DM", mana);
@@ -74,10 +75,10 @@ const Card& addObserved(Battle& b, std::vector<int>& log, int id, int damage = 1
 void run(const std::string& name) {
     if (name == "scheduled_boss") {
         Match match("scheduled-boss", 8);
-        auto hero = std::make_unique<Hero>("hero", "Hero", HeroType{HeroClass::WARRIOR, 101}, 50);
+        auto hero = std::make_unique<Warrior>("hero", "Hero", 101, 50);
         auto* h = hero.get();
         match.addPlayer(std::move(hero));
-        auto other = std::make_unique<Hero>("other", "Other", HeroType{HeroClass::WARRIOR, 101}, 50);
+        auto other = std::make_unique<Warrior>("other", "Other", 101, 50);
         auto* target = other.get();
         match.addPlayer(std::move(other));
         auto dungeonMaster = std::make_unique<DungeonMaster>("dm", "DM", 10);
@@ -187,7 +188,7 @@ void run(const std::string& name) {
     } else if (name == "invalid_targets") {
         Battle b; b.dmTurn();
         Monster outsideMonster("Outside", 20);
-        Hero outsideHero("outside", "Outside hero", {HeroClass::WARRIOR, 30}, 10);
+        Warrior outsideHero("outside", "Outside hero", 30, 10);
         const Card& card = b.dm->getHandCard(0);
         rejects<std::invalid_argument>([&] { b.match.queueMonsterAttack(*b.dm, outsideMonster, card, *b.hero); });
         rejects<std::invalid_argument>([&] { b.match.queueMonsterAttack(*b.dm, *b.monster, card, outsideHero); });

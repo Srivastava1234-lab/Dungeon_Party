@@ -98,6 +98,7 @@ add_library(game_logic STATIC
         src/Warrior.cpp
         src/Healer.cpp
         src/Wizard.cpp
+        src/TimedEffects.cpp
 )
 target_include_directories(game_logic PUBLIC include)
 target_link_libraries(game_logic PUBLIC nlohmann_json::nlohmann_json)
@@ -161,18 +162,10 @@ add_executable(dungeon_server server/server_main.cpp)
 target_link_libraries(dungeon_server PRIVATE room_server)
 
 # SCRUM-46 (partial): current DM attack cards and queued monster actions.
-add_executable(monster_card_tests
-        tests/monster_card_tests.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Trap.cpp
-        src/TimedEffects.cpp
-)
-target_include_directories(monster_card_tests PRIVATE include)
+# Links game_logic instead of listing the source files, so new game files (like the hero
+# subclasses) are picked up automatically.
+add_executable(monster_card_tests tests/monster_card_tests.cpp)
+target_link_libraries(monster_card_tests PRIVATE game_logic)
 foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end spell_targets frost_bolt scheduled_boss)
     add_test(NAME monster_card_${case_name} COMMAND monster_card_tests ${case_name})
 endforeach()

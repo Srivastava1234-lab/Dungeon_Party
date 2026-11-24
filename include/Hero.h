@@ -16,7 +16,8 @@ private:
     bool manaTrapActive = false;
     int manaSpentForTrap = 0;
     TrapEffect activeTrapEffect = TrapEffect::DAMAGE;
-    
+    TimedEffects timedEffects;          // SCRUM-55 (Soroush): effects that last a number of rounds
+
 
 public:
     Hero(std::string id, std::string name, HeroType type, int maxMana, bool bot = false);
@@ -34,6 +35,11 @@ public:
     void armManaTrap(TrapEffect effect);
     std::optional<TrapEffect> recordManaSpentForTrap(int amount);
     void clearManaTrap();
+    bool hasManaTrap() const;           // SCRUM-54 (Soroush): read-only, for the DM's state
+    TrapEffect getTrapEffect() const;   // only meaningful while hasManaTrap()
+    void addTimedEffect(TimedEffectType type, int value, int rounds); // SCRUM-55 (Soroush)
+    const TimedEffects& getTimedEffects() const;
+    void tickEffects();
     virtual int calculateShield(int baseAmount, bool targetingSelf) const;
     virtual bool canHealAllies() const;
     virtual bool canShieldAllies() const;

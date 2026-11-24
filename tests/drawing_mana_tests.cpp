@@ -1,4 +1,5 @@
 #include "Match.h"
+#include "Warrior.h"
 #include "HeroCard.h"
 #include "DMCard.h"
 #include <iostream>
@@ -21,7 +22,7 @@ struct Battle {
     DungeonMaster* dm;
     Monster* monster;
     explicit Battle(int mana) {
-        auto h = std::make_unique<Hero>("h", "Hero", HeroType{HeroClass::WARRIOR, 30}, mana);
+        auto h = std::make_unique<Warrior>("h", "Hero", 30, mana);
         hero = h.get();
         auto d = std::make_unique<DungeonMaster>("dm", "DM", 3);
         dm = d.get();
@@ -33,7 +34,7 @@ struct Battle {
     }
 };
 void drawing() {
-    Hero hero("h", "Hero", {HeroClass::WARRIOR, 30}, 3);
+    Warrior hero("h", "Hero", 30, 3);
     require(hero.drawCard() == nullptr && hero.getHandSize() == 0, "Empty draw must leave hand empty");
     auto first = strike("First", 1);
     auto second = strike("Second", 2);
@@ -51,16 +52,16 @@ void drawing() {
             "Empty draw must preserve hand, discard and mana");
 }
 void manaBoundaries() {
-    Hero hero("h", "Hero", {HeroClass::WARRIOR, 30}, 3);
+    Warrior hero("h", "Hero", 30, 3);
     require(hero.getMana() == 3 && hero.getMaxMana() == 3, "Initial mana must equal maximum");
     require(!hero.canPay(-1) && hero.canPay(0) && hero.canPay(3) && !hero.canPay(4), "Affordability boundaries");
     require(hero.getMana() == 3, "Affordability query must not spend mana");
     hero.refillMana(); hero.refillMana();
     require(hero.getMana() == 3, "Refill must not accumulate mana");
-    Hero zero("z", "Zero", {HeroClass::WARRIOR, 30}, 0);
+    Warrior zero("z", "Zero", 30, 0);
     zero.refillMana();
     require(zero.getMana() == 0 && zero.canPay(0) && !zero.canPay(1), "Zero mana boundaries");
-    rejects([] { Hero invalid("h", "Hero", {HeroClass::WARRIOR, 30}, -1); });
+    rejects([] { Warrior invalid("h", "Hero", 30, -1); });
     rejects([] { strike("Invalid", -1); });
 }
 void spendingAndTurns() {

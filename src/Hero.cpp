@@ -141,3 +141,27 @@ bool Hero::canShieldAllies() const {
 int Hero::getMaxHealth() const {
     return maxHealth;
 }
+
+// ---- SCRUM-54 (Soroush): read-only trap info for the DM's view
+
+bool Hero::hasManaTrap() const {
+    return manaTrapActive;
+}
+
+TrapEffect Hero::getTrapEffect() const {
+    return activeTrapEffect;
+}
+
+// ---- SCRUM-55 (Soroush): effects that last a number of rounds
+
+void Hero::addTimedEffect(TimedEffectType type, int value, int rounds) {
+    timedEffects.add(type, value, rounds);
+}
+
+const TimedEffects& Hero::getTimedEffects() const {
+    return timedEffects;
+}
+
+void Hero::tickEffects() {
+    timedEffects.tick();
+}

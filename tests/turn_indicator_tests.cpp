@@ -1,4 +1,5 @@
 #include "TurnIndicator.h"
+#include "Warrior.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -9,8 +10,8 @@ void expect(const Match& match, const std::string& expected) {
 int main() {
     Match match("indicator-test", 2);
     expect(match, "Waiting for match to start");
-    match.addPlayer(std::make_unique<Hero>("h1", "Hero 1", HeroType{HeroClass::WARRIOR, 30}, 3));
-    match.addPlayer(std::make_unique<Hero>("h2", "Hero 2", HeroType{HeroClass::WARRIOR, 30}, 3));
+    match.addPlayer(std::make_unique<Warrior>("h1", "Hero 1", 30, 3));
+    match.addPlayer(std::make_unique<Warrior>("h2", "Hero 2", 30, 3));
     match.addPlayer(std::make_unique<DungeonMaster>("dm", "DM", 3));
     match.addMonster(std::make_unique<Monster>("Goblin", 10));
     match.start();
