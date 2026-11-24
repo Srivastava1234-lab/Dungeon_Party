@@ -95,6 +95,9 @@ add_library(game_logic STATIC
         src/Monster.cpp
         src/Player.cpp
         src/Trap.cpp
+        src/Warrior.cpp
+        src/Healer.cpp
+        src/Wizard.cpp
         src/TimedEffects.cpp
 )
 target_include_directories(game_logic PUBLIC include)
@@ -172,28 +175,22 @@ target_link_libraries(match_result_tests PRIVATE room_server SQLite::SQLite3)
 add_test(NAME match_results_by_id COMMAND match_result_tests)
 
 # SCRUM-46 (partial): current DM attack cards and queued monster actions.
-add_executable(monster_card_tests
-        tests/monster_card_tests.cpp
-        src/Card.cpp
-        src/DungeonMaster.cpp
-        src/Hero.cpp
-        src/Match.cpp
-        src/Monster.cpp
-        src/Player.cpp
-        src/Trap.cpp
-        src/TimedEffects.cpp
-)
-target_include_directories(monster_card_tests PRIVATE include)
+# Links game_logic instead of listing the source files, so new game files (like the hero
+# subclasses) are picked up automatically.
+add_executable(monster_card_tests tests/monster_card_tests.cpp)
+target_link_libraries(monster_card_tests PRIVATE game_logic)
 foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end spell_targets frost_bolt scheduled_boss)
     add_test(NAME monster_card_${case_name} COMMAND monster_card_tests ${case_name})
 endforeach()
 
 add_executable(net_tests tests/net_tests.cpp)
-target_link_libraries(net_tests PRIVATE room_server net_client)
+target_sources(net_tests PRIVATE server/MatchResultStore.cpp)
+target_include_directories(net_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(net_tests PRIVATE room_server net_client SQLite::SQLite3)
 add_test(NAME network COMMAND net_tests)
 
 # SCRUM-59: existing card interaction checks, including Release builds.
-foreach(test_name shield_test weakness_test support_card_test burn_test)
+foreach(test_name shield_test weakness_test support_card_test burn_test model_tests)
     add_executable(${test_name} tests/${test_name}.cpp)
     target_link_libraries(${test_name} PRIVATE game_logic)
     if(MSVC)
@@ -218,3 +215,14 @@ target_link_libraries(healing_tests PRIVATE game_logic)
 foreach(case_name amount max_cap full_health nonpositive large_amount card_effect role_and_target)
     add_test(NAME healing_${case_name} COMMAND healing_tests ${case_name})
 endforeach()
+
+# Sprint 3 task 38: register the remaining existing test programs.
+add_executable(drawing_mana_tests tests/drawing_mana_tests.cpp)
+target_link_libraries(drawing_mana_tests PRIVATE game_logic)
+foreach(case_name drawing mana_boundaries spending_turns rejected_play)
+    add_test(NAME drawing_mana_${case_name} COMMAND drawing_mana_tests ${case_name})
+endforeach()
+
+add_executable(turn_indicator_tests tests/turn_indicator_tests.cpp)
+target_link_libraries(turn_indicator_tests PRIVATE game_logic)
+add_test(NAME turn_indicator COMMAND turn_indicator_tests)

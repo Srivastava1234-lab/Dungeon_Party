@@ -170,19 +170,16 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
         for (std::size_t i = 0; i < heroes.size(); i++) {
             if (heroes[i] == &t && heroes[i]->isAlive()) {
                 bool targetingSelf = heroes[i] == caster;
-                bool isHealer =
-                    caster->getType().heroClass == HeroClass::HEALER;
 
-                if (hc->getEffect() == HeroEffect::SHIELD) {
-                    if (!targetingSelf && !isHealer) {
-                        return fail("Only Healers can shield allies");
+                if (!targetingSelf && hc->getEffect() == HeroEffect::SHIELD &&
+                    !caster->canShieldAllies()) {
+                    return fail("This hero cannot shield allies");
+                }
+                if (!targetingSelf && hc->getEffect() == HeroEffect::HEAL) {
+                    if (!caster->canHealAllies()) {
+                        return fail("This hero cannot heal allies");
                     }
-                } else if (hc->getEffect() == HeroEffect::HEAL) {
-                    if (!targetingSelf && !isHealer) {
-                        return fail("Only Healers can heal allies");
-                    }
-
-                    if (!targetingSelf && hc->getSupportTarget() == SupportTarget::SELF_ONLY) {
+                    if (hc->getSupportTarget() == SupportTarget::SELF_ONLY) {
                         return fail("This healing card can only target yourself");
                     }
                 }
@@ -193,6 +190,7 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
 
         return fail("Select a living allied hero");
     }
+
     for (const auto& m : monsters){
         if (m.get() == &t && m->isAlive()) {
             if (hc->getEffect() == HeroEffect::SPELL &&

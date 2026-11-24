@@ -11,14 +11,20 @@ enum class HeroEffect { ATTACK, HEAL, BUFF, SPELL, SHIELD, FIREBALL};
 enum class DMEffect { SUMMON, TRAP, DEFENSIVE, ATTACK, WEAKNESS, MANA_TRAP, DISCARD_TRAP, MANA_DRAIN_TRAP};
 enum class Phase { ROUND_START, HERO_TURN, DM_TURN, MONSTER_ACTIONS };
 enum class Side { HEROES, DUNGEON_MASTER };
-enum class HeroClass { WARRIOR, RANGER, HEALER };
+enum class HeroClass { WARRIOR, RANGER, HEALER, WIZARD };
 enum class AttackCategory { HEROES, DUNGEON_MASTER };
 struct CheckResult { bool valid; std::optional<std::string> reason; };
 struct HeroType { HeroClass heroClass; int maxHealth; };
 enum class SupportTarget {SELF_ONLY, SELF_OR_ALLY};
 enum class TrapEffect {DAMAGE, DISCARD, MANA_DRAIN};
-
+// SCRUM-55: effects that last a number of the target hero's turns
 enum class TimedEffectType { BUFF };
-struct TimedEffect { TimedEffectType type; int value; int roundsLeft; };
+
+struct TimedEffect {
+    TimedEffectType type;
+    int value;       // strength of the effect, e.g. the buff bonus
+    int roundsLeft;  // counts down at the target hero's turn end; removed at 0
+};
+
 
 #endif

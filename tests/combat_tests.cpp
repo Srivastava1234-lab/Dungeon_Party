@@ -1,4 +1,5 @@
 #include "Match.h"
+#include "Warrior.h"
 #include "HeroCard.h"
 #include <climits>
 #include <iostream>
@@ -16,7 +17,7 @@ struct Battle {
     DungeonMaster* dm;
     Monster* monster;
     Battle(int damage, bool extraMonster = false) {
-        auto h = std::make_unique<Hero>("h", "Hero", HeroType{HeroClass::WARRIOR, 30}, 10);
+        auto h = std::make_unique<Warrior>("h", "Hero", 30, 10);
         hero = h.get();
         h->addToDeck(std::make_unique<HeroCard>("Strike", 1, HeroEffect::ATTACK, damage));
         auto d = std::make_unique<DungeonMaster>("dm", "DM", 3); dm = d.get();
@@ -49,7 +50,7 @@ void invalidTargets() {
           b.hero->getMana() == 10, "Rejected attack must preserve target and player state");
 }
 void monsterDamage() {
-    Hero hero("h", "Hero", {HeroClass::WARRIOR, 30}, 3);
+    Warrior hero("h", "Hero", 30, 3);
     Monster monster("Goblin", 20);
     HeroCard damage("Damage", 0, HeroEffect::ATTACK, 6);
     monster.attack(damage, hero);

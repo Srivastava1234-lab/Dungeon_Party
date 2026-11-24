@@ -1,4 +1,5 @@
 #include <iostream>
+#include "Warrior.h"
 #include <memory>
 #include <exception>
 #include <utility>
@@ -11,19 +12,9 @@ int main() {
     Match match("match-1", 20);
 
     // Create two heroes.
-    std::unique_ptr<Hero> hero = std::make_unique<Hero>(
-        "hero-1",
-        "Warrior",
-        HeroType{HeroClass::WARRIOR, 30},
-        3
-    );
+    std::unique_ptr<Hero> hero = std::make_unique<Warrior>("hero-1", "Warrior", 30, 3);
 
-    std::unique_ptr<Hero> secondHero = std::make_unique<Hero>(
-        "hero-2",
-        "Second Warrior",
-        HeroType{HeroClass::WARRIOR, 30},
-        3
-    );
+    std::unique_ptr<Hero> secondHero = std::make_unique<Warrior>("hero-2", "Second Warrior", 30, 3);
 
     // Create the DM and monster.
     std::unique_ptr<DungeonMaster> dm =
@@ -44,26 +35,44 @@ int main() {
     Monster* monsterView = monster.get();
 
     // Give both heroes attack cards.
-    for (int i = 0; i < 10; i++) {
-        hero->addToDeck(
-            std::make_unique<HeroCard>(
-                "Strike",
-                1,
-                HeroEffect::ATTACK,
-                6
-            )
-        );
+    // Give each hero five attack cards and five healing cards.
+for (int i = 0; i < 5; i++) {
+    hero->addToDeck(
+        std::make_unique<HeroCard>(
+            "Strike",
+            1,
+            HeroEffect::ATTACK,
+            6
+        )
+    );
 
-        secondHero->addToDeck(
-            std::make_unique<HeroCard>(
-                "Strike",
-                1,
-                HeroEffect::ATTACK,
-                6
-            )
-        );
-    }
+    hero->addToDeck(
+        std::make_unique<HeroCard>(
+            "Heal",
+            1,
+            HeroEffect::HEAL,
+            5
+        )
+    );
 
+    secondHero->addToDeck(
+        std::make_unique<HeroCard>(
+            "Strike",
+            1,
+            HeroEffect::ATTACK,
+            6
+        )
+    );
+
+    secondHero->addToDeck(
+        std::make_unique<HeroCard>(
+            "Heal",
+            1,
+            HeroEffect::HEAL,
+            5
+        )
+    );
+}
     // Give the DM monster attack cards.
     for (int i = 0; i < 10; i++) {
         dm->addToDeck(

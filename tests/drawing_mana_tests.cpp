@@ -1,4 +1,5 @@
 #include "Match.h"
+#include "Warrior.h"
 #include "HeroCard.h"
 #include "DMCard.h"
 #include <iostream>
@@ -21,7 +22,7 @@ struct Battle {
     DungeonMaster* dm;
     Monster* monster;
     explicit Battle(int mana) {
-        auto h = std::make_unique<Hero>("h", "Hero", HeroType{HeroClass::WARRIOR, 30}, mana);
+        auto h = std::make_unique<Warrior>("h", "Hero", 30, mana);
         hero = h.get();
         auto d = std::make_unique<DungeonMaster>("dm", "DM", 3);
         dm = d.get();
@@ -33,7 +34,7 @@ struct Battle {
     }
 };
 void drawing() {
-    Hero hero("h", "Hero", {HeroClass::WARRIOR, 30}, 3);
+    Warrior hero("h", "Hero", 30, 3);
     require(hero.drawCard() == nullptr && hero.getHandSize() == 0, "Empty draw must leave hand empty");
     auto first = strike("First", 1);
     auto second = strike("Second", 2);
@@ -51,37 +52,46 @@ void drawing() {
             "Empty draw must preserve hand, discard and mana");
 }
 void manaBoundaries() {
-    Hero hero("h", "Hero", {HeroClass::WARRIOR, 30}, 3);
+    Warrior hero("h", "Hero", 30, 3);
     require(hero.getMana() == 3 && hero.getMaxMana() == 3, "Initial mana must equal maximum");
     require(!hero.canPay(-1) && hero.canPay(0) && hero.canPay(3) && !hero.canPay(4), "Affordability boundaries");
     require(hero.getMana() == 3, "Affordability query must not spend mana");
     hero.refillMana(); hero.refillMana();
     require(hero.getMana() == 3, "Refill must not accumulate mana");
-    Hero zero("z", "Zero", {HeroClass::WARRIOR, 30}, 0);
+    Warrior zero("z", "Zero", 30, 0);
     zero.refillMana();
     require(zero.getMana() == 0 && zero.canPay(0) && !zero.canPay(1), "Zero mana boundaries");
-    rejects([] { Hero invalid("h", "Hero", {HeroClass::WARRIOR, 30}, -1); });
+    rejects([] { Warrior invalid("h", "Hero", 30, -1); });
     rejects([] { strike("Invalid", -1); });
 }
 void spendingAndTurns() {
     Battle b(3);
     b.hero->addToDeck(strike("Exact cost", 3));
     b.hero->addToDeck(strike("Free", 0));
+    for (int i = 0; i < 6; ++i) b.hero->addToDeck(strike("Reserve", 0));
     b.dm->addToDeck(std::make_unique<DMCard>("Summon", 1, DMEffect::SUMMON, 1));
     b.match.start();
-    require(b.hero->getHandSize() == 1 && b.dm->getHandSize() == 0, "Only active player draws at start");
+    require(b.hero->getHandSize() == 7 && b.hero->getDeckSize() == 1 && b.dm->getHandSize() == 0,
+            "Hero opening hand reaches seven; DM waits for its own turn");
     b.match.apply(b.hero->getHandCard(0), *b.monster);
-    require(b.hero->getMana() == 0 && b.hero->getHandSize() == 0 && b.hero->getDiscardSize() == 1,
+    require(b.hero->getMana() == 0 && b.hero->getHandSize() == 6 && b.hero->getDiscardSize() == 1,
             "Successful play spends exact cost and discards once");
+    b.match.apply(b.hero->getHandCard(0), *b.monster);
+    b.match.apply(b.hero->getHandCard(0), *b.monster);
+    require(b.hero->getMana() == 0 && b.hero->getHandSize() == 4 && b.hero->getDiscardSize() == 3,
+            "Free cards preserve zero mana and each discard once");
     b.match.endTurn(*b.hero);
-    require(b.hero->getMana() == 0 && b.dm->getHandSize() == 1, "DM turn draws without refilling inactive hero");
+    require(b.hero->getMana() == 0 && b.dm->getHandSize() == 1,
+            "DM turn draws without refilling inactive hero");
     b.match.endTurn(*b.dm);
-    require(b.hero->getMana() == 3 && b.hero->getHandSize() == 1, "Next hero turn refills and draws one");
+    require(b.hero->getMana() == 3 && b.hero->getHandSize() == 6 &&
+            b.hero->getDeckSize() == 2 && b.hero->getDiscardSize() == 0,
+            "Next hero turn refills, draws two and recycles discard when the deck runs out");
     b.match.apply(b.hero->getHandCard(0), *b.monster);
     require(b.hero->getMana() == 3, "Free card must not spend mana");
     b.match.endTurn(*b.hero); b.match.endTurn(*b.dm);
-    require(b.hero->getHandSize() == 0 && b.hero->getDiscardSize() == 2 && b.hero->getMana() == 3,
-            "Empty deck on turn start must not recycle discard or stop refill");
+    require(b.hero->getHandSize() == 7 && b.hero->getDeckSize() == 0 && b.hero->getMana() == 3,
+            "Turn-start draws stop at the seven-card hand limit");
 }
 void rejectedPlay() {
     Battle b(2);

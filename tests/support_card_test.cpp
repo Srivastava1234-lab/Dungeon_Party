@@ -1,4 +1,6 @@
 #include <cassert>
+#include "Warrior.h"
+#include "Healer.h"
 #include <iostream>
 #include <memory>
 #include <utility>
@@ -9,15 +11,9 @@
 int main() {
     Match match("support-test", 10);
 
-    auto warrior = std::make_unique<Hero>(
-        "warrior", "Warrior",
-        HeroType{HeroClass::WARRIOR, 30}, 10
-    );
+    auto warrior = std::make_unique<Warrior>("warrior", "Warrior", 30, 10);
 
-    auto healer = std::make_unique<Hero>(
-        "healer", "Healer",
-        HeroType{HeroClass::HEALER, 30}, 10
-    );
+    auto healer = std::make_unique<Healer>("healer", "Healer", 30, 10);
 
     Hero* warriorView = warrior.get();
     Hero* healerView = healer.get();
@@ -31,7 +27,7 @@ int main() {
     // Greater Heal must be restricted to Healers.
     HeroCard greaterHeal(
         "Greater Heal", 2, HeroEffect::HEAL, 10,
-        HeroClass::HEALER,
+        std::string("Healer"),
         SupportTarget::SELF_OR_ALLY
     );
 
@@ -43,7 +39,7 @@ int main() {
         healer->addToDeck(
             std::make_unique<HeroCard>(
                 "Greater Heal", 2, HeroEffect::HEAL, 10,
-                HeroClass::HEALER,
+                std::string("Healer"),
                 SupportTarget::SELF_OR_ALLY
             )
         );

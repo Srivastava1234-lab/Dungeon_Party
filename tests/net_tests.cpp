@@ -11,6 +11,7 @@
 #include "../net/NetClient.h"
 #include "../net/Protocol.h"
 #include "../server/RoomServer.h"
+#include "../server/MatchResultStore.h"
 #include "GameData.h"
 
 using nlohmann::json;
@@ -58,7 +59,13 @@ void check(bool condition, const std::string& what) {
 int main() {
     try {
         GameData data(GameData::defaultDataDirectory());
-        RoomServer server(data, TEST_PORT);
+        MatchResultStore results(":memory:");
+        std::vector<std::string> savedMatchIds;
+        RoomServer server(data, TEST_PORT, 0, std::chrono::seconds(10),
+                          [&](const auto& id, Side winner, const auto& players) {
+                              results.save(id, winner, players);
+                              savedMatchIds.push_back(id);
+                          });
 
         TestClient host, guest, stranger;
         std::vector<TestClient*> all{&host, &guest, &stranger};
@@ -570,6 +577,42 @@ int main() {
             const json resumed = back.lastOfType(net::msg::STATE);
             check(resumed["round"] == roundBefore, "turn timer does not run while the room is paused for reconnects");
             check(resumed["turnMsLeft"].get<int>() > 500, "after rejoining, the turn gets a fresh timer");
+        }
+
+        // The selected level and unique match ID must survive the results integration.
+        std::string previousMatchId;
+        for (const int level : {1, 2}) {
+            TestClient finisher;
+            std::vector<TestClient*> clients{&finisher};
+            finisher.net.connect("127.0.0.1", TEST_PORT);
+            pump(server, clients, [&] { return finisher.net.status() == NetClient::Status::Connected; });
+            const auto before = savedMatchIds.size();
+            finisher.net.send({{"t", net::msg::CREATE}, {"name", "Saved hero"}, {"level", level}});
+            pump(server, clients, [&] { return !finisher.lastOfType(net::msg::LOBBY).is_null(); });
+            check(finisher.lastOfType(net::msg::LOBBY)["level"] == level,
+                  "results-enabled server preserves the selected level");
+            const std::string roomCode = finisher.lastOfType(net::msg::JOINED)["code"];
+            const std::string playerId = finisher.lastOfType(net::msg::JOINED)["you"];
+            finisher.net.send({{"t", net::msg::START}});
+            pump(server, clients, [&] { return !finisher.lastOfType(net::msg::STATE).is_null(); });
+            for (int turn = 0; turn < 12 && finisher.lastOfType(net::msg::STATE)["winner"].is_null(); ++turn) {
+                finisher.received.clear();
+                finisher.net.send({{"t", net::msg::END}});
+                pump(server, clients, [&] { return !finisher.lastOfType(net::msg::STATE).is_null() ||
+                                                 !finisher.lastOfType(net::msg::ERROR).is_null(); });
+                check(finisher.lastOfType(net::msg::ERROR).is_null(), "match can progress to a saved result");
+            }
+            check(!finisher.lastOfType(net::msg::STATE)["winner"].is_null(), "network match finishes");
+            check(savedMatchIds.size() == before + 1, "finished network match is saved once");
+            const auto& id = savedMatchIds.back();
+            check(id.size() == 32 && id != roomCode && id != previousMatchId,
+                  "each completed match gets a unique ID, independent of its room code");
+            const auto saved = results.load(id);
+            check(saved && saved->winner == Side::DUNGEON_MASTER && saved->players.size() == 1 &&
+                  saved->players[0].id == playerId && saved->players[0].name == "Saved hero" &&
+                  saved->players[0].role == "warrior" && !saved->finishedAtUtc.empty(),
+                  "actual network result loads by match ID with winner, timestamp and player");
+            previousMatchId = id;
         }
 
         std::cout << "All network tests passed.\n";

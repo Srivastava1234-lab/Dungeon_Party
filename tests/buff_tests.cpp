@@ -1,6 +1,9 @@
 #include "Match.h"
 #include "HeroCard.h"
 #include "GameData.h"
+#include "Warrior.h"
+#include "Healer.h"
+#include "Wizard.h"
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -18,8 +21,14 @@ struct Fixture {
     DungeonMaster* dm;
     Monster* monster;
     explicit Fixture(HeroClass heroClass = HeroClass::WARRIOR) {
-        auto first = std::make_unique<Hero>("first", "First", HeroType{heroClass, 100}, 100);
-        auto second = std::make_unique<Hero>("second", "Second", HeroType{HeroClass::HEALER, 100}, 100);
+        std::unique_ptr<Hero> first;
+        switch (heroClass) {
+            case HeroClass::WARRIOR: first = std::make_unique<Warrior>("first", "First", 100, 100); break;
+            case HeroClass::HEALER: first = std::make_unique<Healer>("first", "First", 100, 100); break;
+            case HeroClass::WIZARD: first = std::make_unique<Wizard>("first", "First", 100, 100); break;
+            default: throw std::invalid_argument("No hero subclass for this test");
+        }
+        auto second = std::make_unique<Healer>("second", "Second", 100, 100);
         caster = first.get(); ally = second.get();
         auto master = std::make_unique<DungeonMaster>("dm", "DM", 100, false);
         dm = master.get();
@@ -42,7 +51,7 @@ int main() {
         const auto* definition = &data.getCard("battle_cry");
         check(definition && definition->value == 5 && definition->manaCost == 8 &&
               definition->durationTurns == 2 && definition->temporary, "Battle Cry data");
-        for (auto heroClass : {HeroClass::WARRIOR, HeroClass::RANGER, HeroClass::HEALER}) {
+        for (auto heroClass : {HeroClass::WARRIOR, HeroClass::WIZARD, HeroClass::HEALER}) {
             Fixture f(heroClass);
             f.match.apply(f.caster->getHandCard(0), *f.ally);
             check(turns(*f.ally) == 2 && f.caster->getMana() == 92, "all classes can buff allies");
@@ -52,6 +61,35 @@ int main() {
             check(turns(*f.ally) == 1, "target first turn");
             f.match.endTurn(*f.dm);
             check(turns(*f.ally) == 1, "round boundary must not tick");
+        }
+        // Shield bonuses stay in the hero subclasses and never consume Buff or Weakness.
+        for (auto heroClass : {HeroClass::WARRIOR, HeroClass::HEALER, HeroClass::WIZARD}) {
+            Fixture f(heroClass);
+            f.match.apply(f.caster->getHandCard(0), *f.caster);
+            f.caster->applyWeakness(2);
+            f.caster->addToDeck(std::make_unique<HeroCard>("Shield", 1, HeroEffect::SHIELD, 5));
+            while (f.caster->getHandSize() < 8) f.caster->drawCard();
+            Hero* target = heroClass == HeroClass::HEALER ? f.ally : f.caster;
+            f.match.apply(f.caster->getHandCard(7), *target);
+            check(target->getShield() == (heroClass == HeroClass::WIZARD ? 5 : 8),
+                  "polymorphic shield bonus works while buffed");
+            check(turns(*f.caster) == 2 && f.caster->getAttackReduction() == 2,
+                  "shield leaves Buff and Weakness active");
+        }
+        // Refreshing a buff still spends mana and can trigger every trap variant.
+        for (auto trap : {TrapEffect::DAMAGE, TrapEffect::DISCARD, TrapEffect::MANA_DRAIN}) {
+            Fixture f;
+            f.caster->armManaTrap(trap);
+            for (int i = 0; i < 3; ++i) f.match.apply(f.caster->getHandCard(0), *f.caster);
+            check(!f.caster->hasManaTrap(), "buff mana spending triggers the armed trap");
+            check(turns(*f.caster) == 2 && f.caster->getTimedEffects().valueOf(TimedEffectType::BUFF) == 5,
+                  "trap interaction preserves one refreshed buff");
+            check(f.caster->getHealth() == (trap == TrapEffect::DAMAGE ? 90 : 100),
+                  "damage trap activates after repeated buff plays");
+            check(f.caster->getMana() == (trap == TrapEffect::MANA_DRAIN ? 71 : 76),
+                  "all buff plays spend mana and mana-drain trap applies");
+            check(f.caster->getHandSize() == (trap == TrapEffect::DISCARD ? 3 : 4),
+                  "discard trap removes one additional card");
         }
         {
             Fixture f;
@@ -80,7 +118,7 @@ int main() {
         }
         {
             Fixture f;
-            Hero outsider("other", "Other", HeroType{HeroClass::WARRIOR, 100}, 100);
+            Warrior outsider("other", "Other", 100, 100);
             const auto hand = f.caster->getHandSize();
             check(!f.match.validate(*f.caster, f.caster->getHandCard(0), outsider).valid,
                   "foreign hero rejected");

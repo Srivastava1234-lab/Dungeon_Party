@@ -1,4 +1,5 @@
 #include <cassert>
+#include "Warrior.h"
 #include <iostream>
 #include <memory>
 #include <utility>
@@ -9,12 +10,7 @@
 int main() {
     Match match("shield-test", 10);
 
-    std::unique_ptr<Hero> hero = std::make_unique<Hero>(
-        "hero-1",
-        "Warrior",
-        HeroType{HeroClass::WARRIOR, 30},
-        3
-    );
+    std::unique_ptr<Hero> hero = std::make_unique<Warrior>("hero-1", "Warrior", 30, 3);
 
     std::unique_ptr<DungeonMaster> dm =
         std::make_unique<DungeonMaster>(

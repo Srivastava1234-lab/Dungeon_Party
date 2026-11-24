@@ -100,7 +100,7 @@ Sprint 1 has exactly one card: the attack card `strike`.
 |---|---|---|---|
 | `id` | text | unique, not empty | Name used by levels to refer to this hero |
 | `name` | text | not empty | Name shown in the game |
-| `heroClass` | text | `WARRIOR`, `RANGER` or `CLERIC` | Hero class (`HeroClass` in `Types.h`) |
+| `heroClass` | text | `WARRIOR`, `RANGER`, `CLERIC` or `WIZARD` | Hero class (`HeroClass` in `Types.h`) |
 | `maxHealth` | whole number | 1 or more | Health; the hero starts the match with full health (`HeroType::maxHealth`) |
 | `maxMana` | whole number | 0 or more | Mana; the hero starts with full mana and mana is refilled every round (`Player::maxMana`) |
 | `image` | text | not empty, `/` only | Picture of the hero, relative to the project folder |
@@ -259,7 +259,7 @@ entry once **all** its values are final, and update this table.
 ## How to add new data
 
 - **New card:** add an entry to `cards.json`. No C++ change is needed if the effect already exists.
-- **New hero class:** add an entry to `heroes.json` (only `WARRIOR`, `RANGER`, `CLERIC` exist).
+- **New hero class:** add an entry to `heroes.json` (the loader accepts `WARRIOR`, `RANGER`, `CLERIC`, `WIZARD`; the server has subclasses for Warrior, Healer and Wizard).
 - **New monster kind:** add an entry to `monsters.json`.
 - **New level:** copy `levels/level_1.json` to `levels/level_2.json` and change `number` to `2`.
 

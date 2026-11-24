@@ -82,14 +82,8 @@ void Player::playCard(const Card& card, const std::vector<Targetable*>& targets)
             throw std::invalid_argument("Shield requires a hero target");
         }
 
-        int shieldAmount = heroCard->getValue();
-        bool targetingSelf = shieldTarget == hero;
-
-        if (hero->getType().heroClass == HeroClass::WARRIOR && targetingSelf) {
-            shieldAmount += 3;
-        } else if (hero->getType().heroClass == HeroClass::HEALER && !targetingSelf) {
-            shieldAmount += 3;
-        }
+        const int shieldAmount = hero->calculateShield(
+            heroCard->getValue(), shieldTarget == hero);
 
         shieldTarget->addShield(shieldAmount);
 

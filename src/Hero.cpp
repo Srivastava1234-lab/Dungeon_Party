@@ -4,15 +4,13 @@
 #include <stdexcept>
 #include <utility>
 
-Hero::Hero(std::string id, std::string n, HeroType t, int m, bool b)
-    : Player(std::move(id), 
-    std::move(n), m, b), 
-    health(t.maxHealth),
-    type(t){
-        if(t.maxHealth <= 0){
-            throw std::invalid_argument("Hero needs positive hp");
-        }
-    } 
+Hero::Hero(std::string id, std::string name, HeroType heroType, int maxMana, bool bot)
+    : Player(std::move(id), std::move(name), maxMana, bot), health(heroType.maxHealth), maxHealth(heroType.maxHealth), type(heroType) {
+
+    if (maxHealth <= 0) {
+        throw std::invalid_argument("Hero needs positive HP");
+    }
+}
     
 bool Hero::acceptsCard(const Card& c) const{
     return dynamic_cast<const HeroCard*>(&c) && c.canBePlayedBy(*this);
@@ -44,10 +42,10 @@ void Hero::heal(int amount) {
         return;
     }
 
-    int missingHealth = type.maxHealth - health;
+    int missingHealth = maxHealth - health;
 
     if (amount > missingHealth) {
-        health = type.maxHealth;
+        health = maxHealth;
     } else {
         health += amount;
     }
@@ -128,7 +126,44 @@ void Hero::clearManaTrap() {
     manaTrapActive = false;
     manaSpentForTrap = 0;
 }
-void Hero::addTimedEffect(TimedEffectType type, int value, int turns) {
+
+int Hero::calculateShield(int baseAmount, bool targetingSelf) const {
+    return baseAmount;
+}
+
+bool Hero::canHealAllies() const {
+    return false;
+}
+
+bool Hero::canShieldAllies() const {
+    return false;
+}
+
+int Hero::getMaxHealth() const {
+    return maxHealth;
+}
+
+// ---- SCRUM-54 (Soroush): read-only trap info for the DM's view
+
+bool Hero::hasManaTrap() const {
+    return manaTrapActive;
+}
+
+TrapEffect Hero::getTrapEffect() const {
+    return activeTrapEffect;
+}
+
+// ---- SCRUM-55 (Soroush): effects that last a number of target turns
+
+void Hero::addTimedEffect(TimedEffectType type, int value, int rounds) {
     if (!isAlive()) throw std::invalid_argument("Cannot buff a defeated hero");
-    timedEffects.add(type, value, turns);
+    timedEffects.add(type, value, rounds);
+}
+
+const TimedEffects& Hero::getTimedEffects() const {
+    return timedEffects;
+}
+
+void Hero::tickEffects() {
+    timedEffects.tick();
 }

@@ -1,4 +1,6 @@
 #include "Hero.h"
+#include "Warrior.h"
+#include "Healer.h"
 #include "HeroCard.h"
 #include "Monster.h"
 #include <climits>
@@ -21,7 +23,7 @@ template<class Exception, class F> void rejects(F action) {
 
 void run(const std::string& name) {
     // The current enum is HEALER. The team's announced CLERK rename is not in main yet.
-    Hero hero("support", "Support", {HeroClass::HEALER, 30}, 10);
+    Healer hero("support", "Support", 30, 10);
     if (name == "amount") {
         hero.takeDamage(10); hero.heal(6); healthIs(hero, 26);
     } else if (name == "max_cap") {
@@ -36,7 +38,7 @@ void run(const std::string& name) {
     } else if (name == "large_amount") {
         hero.takeDamage(5); hero.heal(INT_MAX); healthIs(hero, 30);
         // A correct implementation must also avoid signed integer overflow.
-        Hero large("large", "Large", {HeroClass::HEALER, INT_MAX}, 10);
+        Healer large("large", "Large", INT_MAX, 10);
         large.takeDamage(10); large.heal(INT_MAX); healthIs(large, INT_MAX);
     } else if (name == "card_effect") {
         hero.takeDamage(10);
@@ -44,7 +46,7 @@ void run(const std::string& name) {
         check(card.canBePlayedBy(hero), "Support class must accept a healing card");
         card.applyEffect(hero); healthIs(hero, 25);
     } else if (name == "role_and_target") {
-        Hero warrior("warrior", "Warrior", {HeroClass::WARRIOR, 30}, 10);
+        Warrior warrior("warrior", "Warrior", 30, 10);
         warrior.addToDeck(std::make_unique<HeroCard>("Heal", 2, HeroEffect::HEAL, 5));
         check(warrior.drawCard() != nullptr, "Warrior can draw an unrestricted self-heal");
         check(warrior.getHandSize() == 1 && warrior.getMana() == 10,

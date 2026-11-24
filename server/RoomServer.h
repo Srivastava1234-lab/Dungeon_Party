@@ -73,6 +73,8 @@ private:
         std::vector<Member> members;
         bool resultSaved = false;
         std::unique_ptr<Match> match; // nullptr while waiting in the lobby
+        int level = 1;                // SCRUM-63: chosen by the host when creating the room
+        std::string levelName;        // shown in the lobby
         nlohmann::json queued = nlohmann::json::array(); // DM orders this turn {monster, hero, card} (SCRUM-40)
 
         // Turn timer: whose turn it is ("<playerId>#<round>") and when it ends automatically.

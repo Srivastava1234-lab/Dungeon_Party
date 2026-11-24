@@ -134,7 +134,7 @@ inline std::string sanitizeName(const std::string& raw) {
 // Message types ("t" field)
 namespace msg {
     // client -> server
-    inline constexpr const char* CREATE = "create"; // { name }                     host makes a new room
+    inline constexpr const char* CREATE = "create"; // { name, level }              host makes a new room (level optional, default 1)
     inline constexpr const char* JOIN   = "join";   // { name, code }               join an existing room
     inline constexpr const char* REJOIN = "rejoin"; // { code, token }              rejoin a disconnected seat
     inline constexpr const char* START  = "start";  // {}                           host only, starts the match
@@ -147,7 +147,7 @@ namespace msg {
 
     // server -> client
     inline constexpr const char* JOINED = "joined"; // { code, you, token }         you are in a room now
-    inline constexpr const char* LOBBY  = "lobby";  // { code, players[] }          waiting room changed
+    inline constexpr const char* LOBBY  = "lobby";  // { code, players[], level, levelName } waiting room changed
     inline constexpr const char* STATE  = "state";  // { round, phase, ... }        match state (only YOUR hand)
     inline constexpr const char* ERROR  = "error";  // { msg }                      request was rejected
     inline constexpr const char* CLOSED = "closed"; // { msg }                      room was closed

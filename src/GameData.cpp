@@ -206,6 +206,7 @@ DMEffect toDMEffect(const std::string& text, const std::string& where) {
 HeroClass toHeroClass(const std::string& text, const std::string& where) {
     if (text == "WARRIOR") return HeroClass::WARRIOR;
     if (text == "RANGER") return HeroClass::RANGER;
+    if (text == "WIZARD") return HeroClass::WIZARD;
     if (text == "CLERIC") {
         // TODO(SCRUM-5): CLERIC vs HEALER.
         // The team agreed to call this class "CLERIC" (Vision document, UML OCL constraints,
@@ -220,7 +221,7 @@ HeroClass toHeroClass(const std::string& text, const std::string& where) {
     if (text == "HEALER") {
         fail(where, "write \"CLERIC\" instead of \"HEALER\" in the data files (see data/README.md)");
     }
-    fail(where, "unknown heroClass \"" + text + "\" (allowed: WARRIOR, RANGER, CLERIC)");
+    fail(where, "unknown heroClass \"" + text + "\" (allowed: WARRIOR, RANGER, CLERIC, WIZARD)");
 }
 
 } // namespace
