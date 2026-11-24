@@ -1,4 +1,5 @@
 #include <iostream>
+#include "Warrior.h"
 #include <memory>
 #include <exception>
 #include <utility>
@@ -11,19 +12,9 @@ int main() {
     Match match("match-1", 20);
 
     // Create two heroes.
-    std::unique_ptr<Hero> hero = std::make_unique<Hero>(
-        "hero-1",
-        "Warrior",
-        HeroType{HeroClass::WARRIOR, 30},
-        3
-    );
+    std::unique_ptr<Hero> hero = std::make_unique<Warrior>("hero-1", "Warrior", 30, 3);
 
-    std::unique_ptr<Hero> secondHero = std::make_unique<Hero>(
-        "hero-2",
-        "Second Warrior",
-        HeroType{HeroClass::WARRIOR, 30},
-        3
-    );
+    std::unique_ptr<Hero> secondHero = std::make_unique<Warrior>("hero-2", "Second Warrior", 30, 3);
 
     // Create the DM and monster.
     std::unique_ptr<DungeonMaster> dm =

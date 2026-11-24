@@ -1,4 +1,6 @@
 #include <cassert>
+#include "Warrior.h"
+#include "Healer.h"
 #include <iostream>
 #include <memory>
 #include <utility>
@@ -9,15 +11,9 @@
 int main() {
     Match match("support-test", 10);
 
-    auto warrior = std::make_unique<Hero>(
-        "warrior", "Warrior",
-        HeroType{HeroClass::WARRIOR, 30}, 10
-    );
+    auto warrior = std::make_unique<Warrior>("warrior", "Warrior", 30, 10);
 
-    auto healer = std::make_unique<Hero>(
-        "healer", "Healer",
-        HeroType{HeroClass::HEALER, 30}, 10
-    );
+    auto healer = std::make_unique<Healer>("healer", "Healer", 30, 10);
 
     Hero* warriorView = warrior.get();
     Hero* healerView = healer.get();
