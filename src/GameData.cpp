@@ -187,7 +187,8 @@ HeroEffect toHeroEffect(const std::string& text, const std::string& where) {
     if (text == "BUFF") return HeroEffect::BUFF;
     if (text == "SPELL") return HeroEffect::SPELL;
     if (text == "SHIELD") return HeroEffect::SHIELD;
-    fail(where, "unknown effect \"" + text + "\" for a HEROES card (allowed: ATTACK, HEAL, BUFF, SPELL)");
+    if (text == "FIREBALL") return HeroEffect::FIREBALL;
+    fail(where, "unknown effect \"" + text + "\" for a HEROES card (allowed: ATTACK, HEAL, BUFF, SPELL, SHIELD, FIREBALL)");
 }
 
 DMEffect toDMEffect(const std::string& text, const std::string& where) {
@@ -196,7 +197,10 @@ DMEffect toDMEffect(const std::string& text, const std::string& where) {
     if (text == "DEFENSIVE") return DMEffect::DEFENSIVE;
     if (text == "ATTACK") return DMEffect::ATTACK;
     if (text == "WEAKNESS") return DMEffect::WEAKNESS;
-    fail(where, "unknown effect \"" + text + "\" for a DUNGEON_MASTER card (allowed: SUMMON, TRAP, DEFENSIVE, ATTACK)");
+    if (text == "MANA_TRAP") return DMEffect::MANA_TRAP;
+    if (text == "DISCARD_TRAP") return DMEffect::DISCARD_TRAP;
+    if (text == "MANA_DRAIN_TRAP") return DMEffect::MANA_DRAIN_TRAP;
+    fail(where, "unknown effect \"" + text + "\" for a DUNGEON_MASTER card (allowed: SUMMON, TRAP, DEFENSIVE, ATTACK, WEAKNESS, MANA_TRAP, DISCARD_TRAP, MANA_DRAIN_TRAP)");
 }
 
 HeroClass toHeroClass(const std::string& text, const std::string& where) {
@@ -280,6 +284,9 @@ void GameData::loadCards() {
                 card.freezeRounds = readNumber(entry, "freezeRounds", 0, where);
                 if (card.freezeRounds > 1) throw std::runtime_error(where + ": freezeRounds must be 0 or 1");
             }
+        }
+        if (card.heroEffect == HeroEffect::BUFF && entry.contains("durationTurns")) {
+            card.durationTurns = readNumber(entry, "durationTurns", 1, where);
         }
         card.manaCost = readNumber(entry, "manaCost", 0, where);
         card.value = readNumber(entry, "value", 0, where);

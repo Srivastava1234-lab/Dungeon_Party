@@ -95,6 +95,17 @@
       "value": 5,
       "description": "Reduce the attack of one hero.",
       "temporary": true
+    },
+    {
+      "id": "battle_cry",
+      "name": "Battle Cry",
+      "side": "HEROES",
+      "effect": "BUFF",
+      "manaCost": 8,
+      "value": 5,
+      "durationTurns": 2,
+      "description": "Give yourself or one living teammate +5 damage on damaging cards for 2 of their turns. Replaying refreshes the duration.",
+      "temporary": true
     }
   ]
 }

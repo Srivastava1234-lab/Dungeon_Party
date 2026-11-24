@@ -94,7 +94,7 @@ void Player::playCard(const Card& card, const std::vector<Targetable*>& targets)
         shieldTarget->addShield(shieldAmount);
 
     } else if (hero != nullptr && damagingCard) {
-        int damage = heroCard->getValue() - hero->getAttackReduction();
+        int damage = heroCard->getValue() + hero->getTimedEffects().valueOf(TimedEffectType::BUFF) - hero->getAttackReduction();
 
         if (damage < 0) {
             damage = 0;

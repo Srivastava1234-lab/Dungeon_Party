@@ -95,6 +95,7 @@ add_library(game_logic STATIC
         src/Monster.cpp
         src/Player.cpp
         src/Trap.cpp
+        src/TimedEffects.cpp
 )
 target_include_directories(game_logic PUBLIC include)
 target_link_libraries(game_logic PUBLIC nlohmann_json::nlohmann_json)
@@ -180,6 +181,7 @@ add_executable(monster_card_tests
         src/Monster.cpp
         src/Player.cpp
         src/Trap.cpp
+        src/TimedEffects.cpp
 )
 target_include_directories(monster_card_tests PRIVATE include)
 foreach(case_name deferred_damage order mana turn_authority invalid_targets invalid_cards turn_limit queue_cleared defeated_participants match_end spell_targets frost_bolt scheduled_boss)
@@ -189,3 +191,30 @@ endforeach()
 add_executable(net_tests tests/net_tests.cpp)
 target_link_libraries(net_tests PRIVATE room_server net_client)
 add_test(NAME network COMMAND net_tests)
+
+# SCRUM-59: existing card interaction checks, including Release builds.
+foreach(test_name shield_test weakness_test support_card_test burn_test)
+    add_executable(${test_name} tests/${test_name}.cpp)
+    target_link_libraries(${test_name} PRIVATE game_logic)
+    if(MSVC)
+        target_compile_options(${test_name} PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(${test_name} PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endforeach()
+add_executable(buff_tests tests/buff_tests.cpp)
+target_link_libraries(buff_tests PRIVATE game_logic game_data)
+add_test(NAME battle_cry COMMAND buff_tests)
+
+add_executable(card_data_tests tests/card_data_tests.cpp)
+target_link_libraries(card_data_tests PRIVATE game_data nlohmann_json::nlohmann_json)
+foreach(case_name valid_effects missing_file malformed_json structure required_fields field_types numbers ids enums deck_references)
+    add_test(NAME card_data_${case_name} COMMAND card_data_tests ${case_name} "${CMAKE_CURRENT_SOURCE_DIR}/data")
+endforeach()
+
+add_executable(healing_tests tests/healing_tests.cpp)
+target_link_libraries(healing_tests PRIVATE game_logic)
+foreach(case_name amount max_cap full_health nonpositive large_amount card_effect role_and_target)
+    add_test(NAME healing_${case_name} COMMAND healing_tests ${case_name})
+endforeach()

@@ -42,10 +42,10 @@ int main() {
 
     std::size_t startingHand = heroView->getHandSize();
 
-    // Play Shield on the hero.
+    // Warrior self-shield adds the +3 class bonus.
     match.apply(heroView->getHandCard(0), *heroView);
 
-    assert(heroView->getShield() == 5);
+    assert(heroView->getShield() == 8);
     assert(heroView->getHealth() == 30);
     assert(heroView->getMana() == 2);
     assert(heroView->getHandSize() == startingHand - 1);
@@ -56,28 +56,28 @@ int main() {
     // Shield absorbs the entire hit.
     heroView->takeDamage(3);
 
-    assert(heroView->getShield() == 2);
+    assert(heroView->getShield() == 5);
     assert(heroView->getHealth() == 30);
 
     std::cout << "Shield absorbs damage before health.\n";
 
-    // Remaining shield absorbs 2; the other 3 damage hits HP.
-    heroView->takeDamage(5);
+    // Remaining shield absorbs 5; the other 3 damage hits HP.
+    heroView->takeDamage(8);
 
     assert(heroView->getShield() == 0);
     assert(heroView->getHealth() == 27);
 
     std::cout << "Excess damage reduces health.\n";
 
-    // Two Shield cards stack to 10.
+    // Two Warrior self-shields stack to 16.
     match.apply(heroView->getHandCard(0), *heroView);
     match.apply(heroView->getHandCard(0), *heroView);
 
-    assert(heroView->getShield() == 10);
+    assert(heroView->getShield() == 16);
     assert(heroView->getMana() == 0);
 
     // An exact hit removes shield without damaging HP.
-    heroView->takeDamage(10);
+    heroView->takeDamage(16);
 
     assert(heroView->getShield() == 0);
     assert(heroView->getHealth() == 27);

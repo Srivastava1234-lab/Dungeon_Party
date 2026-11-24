@@ -393,7 +393,7 @@ std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
                     hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value,
                                                                card.target, card.freezeRounds));
                 else
-                    hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value));
+                    hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value, std::nullopt, SupportTarget::SELF_ONLY, card.durationTurns));
             }
         }
         match->addPlayer(std::move(hero));
@@ -739,6 +739,8 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
         heroes.push_back({{"id", hero->getPlayerId()}, {"name", hero->getName()}, {"heroId", heroId},
                           {"hp", hero->getHealth()}, {"maxHp", hero->getType().maxHealth},
                           {"mana", hero->getMana()}, {"maxMana", hero->getMaxMana()},
+                          {"buffTurns", hero->getTimedEffects().roundsLeft(TimedEffectType::BUFF)},
+                          {"buffValue", hero->getTimedEffects().valueOf(TimedEffectType::BUFF)},
                           {"handSize", hero->getHandSize()}, {"connected", connected}});
 
         // Hidden information: only the viewer's own cards are sent to them.

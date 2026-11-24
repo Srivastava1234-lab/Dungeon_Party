@@ -99,7 +99,7 @@ HeroEffect effectFromName(const std::string& name) {
 }
 
 // Cards that are played on a hero instead of a monster
-bool targetsHero(const std::string& effect) { return effect == "HEAL" || effect == "SHIELD"; }
+bool targetsHero(const std::string& effect) { return effect == "HEAL" || effect == "SHIELD" || effect == "BUFF"; }
 
 // Safe readers: the state comes over the network, so a missing field must not crash the client.
 int intOr(const json& j, const char* key, int fallback = 0) {
@@ -986,7 +986,7 @@ int main() {
                                                   (!iAmDm && selectedCard >= 0 && targetsHero(selectedEffect)));
                 ImGui::PushID(static_cast<int>(i));
                 const bool clicked = drawCharacter({label, intOr(hero, "hp"), intOr(hero, "maxHp", 1), intOr(hero, "mana"),
-                                                    intOr(hero, "maxMana"), textureOr0(heroTextures, strOr(hero, "heroId"))},
+                                                    intOr(hero, "maxMana"), textureOr0(heroTextures, strOr(hero, "heroId")), intOr(hero, "buffTurns")},
                                                    scale, canTarget);
                 ImGui::PopID();
                 if (clicked && canTarget) {

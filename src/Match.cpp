@@ -159,10 +159,7 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     if (!hc){
         return fail("DM effects are not implemented yet");
     } 
-    if (hc->getEffect() == HeroEffect::BUFF){
-        return fail("Buff rules are not implemented yet");
-    } 
-    if (hc->getEffect() == HeroEffect::HEAL || hc->getEffect() == HeroEffect::SHIELD) {
+    if (hc->getEffect() == HeroEffect::HEAL || hc->getEffect() == HeroEffect::SHIELD || hc->getEffect() == HeroEffect::BUFF) {
 
         const Hero* caster = dynamic_cast<const Hero*>(&p);
 
@@ -180,7 +177,7 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
                     if (!targetingSelf && !isHealer) {
                         return fail("Only Healers can shield allies");
                     }
-                } else {
+                } else if (hc->getEffect() == HeroEffect::HEAL) {
                     if (!targetingSelf && !isHealer) {
                         return fail("Only Healers can heal allies");
                     }
@@ -326,6 +323,7 @@ void Match::endTurn(Player& p) {
 
         if (endingHero != nullptr) {
             endingHero->clearManaTrap();
+            endingHero->tickEffects();
         }
 
         do { ++activeHero; } while (activeHero < heroes.size() && !heroes[activeHero]->isAlive());

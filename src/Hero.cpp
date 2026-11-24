@@ -36,6 +36,7 @@ void Hero::takeDamage(int amount) {
     shield = 0;
 
     health = std::max(0, health - amount);
+    if (!isAlive()) timedEffects.clear();
 }
 
 void Hero::heal(int amount) {
@@ -126,4 +127,8 @@ std::optional<TrapEffect> Hero::recordManaSpentForTrap(int amount) {
 void Hero::clearManaTrap() {
     manaTrapActive = false;
     manaSpentForTrap = 0;
+}
+void Hero::addTimedEffect(TimedEffectType type, int value, int turns) {
+    if (!isAlive()) throw std::invalid_argument("Cannot buff a defeated hero");
+    timedEffects.add(type, value, turns);
 }

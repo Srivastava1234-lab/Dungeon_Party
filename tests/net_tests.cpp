@@ -128,6 +128,24 @@ int main() {
         pump(server, all, [&] { return !guest.lastOfType(net::msg::ERROR).is_null(); });
         check(guest.lastOfType(net::msg::ERROR)["msg"] == "It is not your turn", "guest cannot play on the host's turn");
 
+        // Battle Cry uses the real server deck, hero targeting and public snapshot.
+        int buffIndex = -1;
+        for (std::size_t i = 0; i < hostState["hand"].size(); ++i)
+            if (hostState["hand"][i]["effect"] == "BUFF") buffIndex = static_cast<int>(i);
+        check(buffIndex >= 0, "Battle Cry is available in the starting hand");
+        host.received.clear();
+        host.net.send({{"t", net::msg::PLAY}, {"card", buffIndex}, {"target", 0}, {"targetType", "hero"}});
+        pump(server, all, [&] {
+            return !host.lastOfType(net::msg::STATE).is_null() || !host.lastOfType(net::msg::ERROR).is_null();
+        });
+        check(host.lastOfType(net::msg::ERROR).is_null(), "server accepts Battle Cry");
+        hostState = host.lastOfType(net::msg::STATE);
+        check(hostState["heroes"][0]["buffTurns"] == 2 && hostState["heroes"][0]["buffValue"] == 5,
+              "server publishes buff strength and remaining target turns");
+        pump(server, all, [&] {
+            return guest.lastOfType(net::msg::STATE)["heroes"][0].value("buffTurns", 0) == 2;
+        });
+
         // ---- Host attacks the monster
         const int monsterHpBefore = hostState["monsters"][0]["hp"];
         host.received.clear();
@@ -158,6 +176,7 @@ int main() {
             return !s.is_null() && s["active"] == hostState["you"];
         }, 12000);
         auto afterLeave = host.lastOfType(net::msg::STATE);
+        check(afterLeave["heroes"][0]["buffTurns"] == 1, "buff ticks on target turn, not round boundary");
         check(afterLeave["round"] == 2, "game continues in round 2 on the host's turn");
         check(afterLeave["heroes"][1]["connected"] == false, "guest's hero is shown as disconnected");
 

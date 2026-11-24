@@ -45,11 +45,10 @@ void run(const std::string& name) {
         card.applyEffect(hero); healthIs(hero, 25);
     } else if (name == "role_and_target") {
         Hero warrior("warrior", "Warrior", {HeroClass::WARRIOR, 30}, 10);
-        rejects<std::invalid_argument>([&] {
-            warrior.addToDeck(std::make_unique<HeroCard>("Heal", 2, HeroEffect::HEAL, 5));
-        });
-        check(warrior.getHandSize() == 0 && warrior.getMana() == 10,
-              "Rejected healing card changed warrior state");
+        warrior.addToDeck(std::make_unique<HeroCard>("Heal", 2, HeroEffect::HEAL, 5));
+        check(warrior.drawCard() != nullptr, "Warrior can draw an unrestricted self-heal");
+        check(warrior.getHandSize() == 1 && warrior.getMana() == 10,
+              "Drawing a healing card must preserve mana");
         Monster monster("Goblin", 20);
         HeroCard card("Heal", 2, HeroEffect::HEAL, 5);
         rejects<std::invalid_argument>([&] { card.applyEffect(monster); });

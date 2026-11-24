@@ -14,6 +14,7 @@ struct Character {
     int mana;
     int maxMana;
     GLuint textureID = 0;
+    int buffTurns = 0;
 };
 
 

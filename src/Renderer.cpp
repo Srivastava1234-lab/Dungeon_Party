@@ -61,6 +61,16 @@ bool drawCharacter(const Character& c, float scale, bool highlighted)
     }
 
     ImGui::Spacing();
+    if (c.buffTurns > 0) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddCircleFilled(ImVec2(p.x + 10, p.y + 10), 10, IM_COL32(230, 170, 40, 255));
+        draw->AddTriangleFilled(ImVec2(p.x + 10, p.y + 3), ImVec2(p.x + 4, p.y + 11),
+                                ImVec2(p.x + 16, p.y + 11), IM_COL32(30, 30, 30, 255));
+        ImGui::Dummy(ImVec2(24, 20));
+        ImGui::SameLine();
+        ImGui::Text("%d turns", c.buffTurns);
+    }
 
     if (c.textureID != 0)
     {
@@ -104,6 +114,7 @@ bool drawCard (const CardView& c, bool playable, bool selected)
             case HeroEffect::SPELL:    ImGui::Text("Spell: %d damage", c.value);  break;
             case HeroEffect::FIREBALL: ImGui::Text("Fireball: %d", c.value);      break;
             case HeroEffect::HEAL:     ImGui::Text("+%d HP", c.value);            break;
+            case HeroEffect::BUFF: ImGui::Text("+%d damage", c.value); break;
             case HeroEffect::SHIELD:   ImGui::Text("Shield %d", c.value);         break;
             default:                   ImGui::Text("Effect %d", c.value);         break;
         }

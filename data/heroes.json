@@ -24,6 +24,10 @@
         {
           "card": "holy_lance",
           "count": 1
+        },
+        {
+          "card": "battle_cry",
+          "count": 1
         }
       ],
       "temporary": true,
@@ -47,6 +51,10 @@
         },
         {
           "card": "frost_bolt",
+          "count": 1
+        },
+        {
+          "card": "battle_cry",
           "count": 1
         }
       ],

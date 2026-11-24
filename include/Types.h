@@ -18,4 +18,7 @@ struct HeroType { HeroClass heroClass; int maxHealth; };
 enum class SupportTarget {SELF_ONLY, SELF_OR_ALLY};
 enum class TrapEffect {DAMAGE, DISCARD, MANA_DRAIN};
 
+enum class TimedEffectType { BUFF };
+struct TimedEffect { TimedEffectType type; int value; int roundsLeft; };
+
 #endif
