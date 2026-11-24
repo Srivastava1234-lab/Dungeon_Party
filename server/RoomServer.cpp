@@ -22,6 +22,16 @@ const char* phaseName(Phase phase) {
     return "UNKNOWN";
 }
 
+// SCRUM-54: readable trap names for the DM view
+const char* trapName(TrapEffect effect) {
+    switch (effect) {
+        case TrapEffect::DAMAGE: return "Mana Trap";
+        case TrapEffect::DISCARD: return "Discard Trap";
+        case TrapEffect::MANA_DRAIN: return "Mana Drain Trap";
+    }
+    return "Trap";
+}
+
 const char* dmEffectName(DMEffect effect) {
     switch (effect) {
         case DMEffect::ATTACK: return "DM_ATTACK";
@@ -753,6 +763,14 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
     }
     if (!state.contains("dm")) state["dm"] = {{"id", "dm"}, {"name", "Computer DM"}, {"human", false}, {"connected", true}};
     if (viewer.role == net::DM_ROLE) {
+        // SCRUM-54: armed traps are hidden information, so only the DM gets them.
+        // Sent on every turn, because traps trigger during the heroes' turns.
+        json traps = json::array();
+        for (const Hero* hero : match.getHeroes())
+            if (hero->hasManaTrap())
+                traps.push_back({{"hero", hero->getName()}, {"type", trapName(hero->getTrapEffect())}});
+        state["dm"]["traps"] = traps;
+
         if (const auto* dm = dynamic_cast<const DungeonMaster*>(active)) {
             state["hand"] = cardsOf(*dm);
             state["dm"]["mana"] = dm->getMana();
