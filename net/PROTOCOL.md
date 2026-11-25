@@ -24,10 +24,12 @@ Every message is one JSON object in one reliable ENet packet. `"t"` is the type.
 
 | t        | fields              | notes                                       |
 |----------|---------------------|---------------------------------------------|
-| `create` | `name`, (`level`)   | make a room; you become host. `level` = level number, default 1; rejected if that level file doesn't exist on the server |
-| `join`   | `name`, `code`      | join a room that hasn't started yet         |
+| `register` | `username`, `password` | create an account and log in. Username 3-16 letters/digits/_/-, unique ignoring case; password 6-64 characters |
+| `login`  | `username`, `password` | log in. **Required before `create` and `join`** on every connection (the client does it automatically, also after a reconnect) |
+| `create` | (`level`)           | make a room; you become host. `level` = level number, default 1; rejected if that level file doesn't exist on the server |
+| `join`   | `code`              | join a room that hasn't started yet         |
 | `rejoin` | `code`, `token`     | reclaim a disconnected seat in an active match |
-| `role`   | `role`              | lobby: `"dm"` or a hero id (`"warrior"`, `"healer"`); only one DM per room |
+| `role`   | `role`              | lobby: `"dm"` or a hero id (`"warrior"`, `"healer"`, `"wizard"`); only one DM per room |
 | `start`  | -                   | host only                                   |
 | `play`   | `card`, `target`, `targetType` | hero: hand index, then `"monster"` + index into `monsters` or `"hero"` + index into `heroes` (Heal) |
 | `command`| `card`, `monster`, `hero` | DM: order monster #m to attack hero #h with DM card #c; happens on End turn |
@@ -52,6 +54,24 @@ dm{id, name, human, connected, mana*, maxMana*, deckSize*, queued*[{monster, her
 `cardsPlayed`, `canBossAttack*`, `turnSeconds` (limit of the current turn, 0 = none), `turnMsLeft` (milliseconds left
 when the message was sent). Fields marked * are only sent to the DM. `dm.traps` (SCRUM-54) lists the traps that are armed and not yet
 triggered, on every turn; heroes never receive it, and a triggered trap appears in the public action log.
+
+## Accounts (login)
+
+- Every player logs in with a username and password. The server gives each account a **permanent,
+  unique player ID** (`"P-K7RM2Q9X"`), sent in `auth` and shown with every player in `lobby` and `state`.
+- Names come from the account: what a client sends as `name` is ignored for logged-in players.
+- Accounts are saved by the server in `accounts.json` (only salted PBKDF2-SHA256 hashes, never passwords).
+  `dungeon_server <port> <data> <seconds> <accountsFile>` sets the file; it is in `.gitignore`.
+  When hosting on "This computer", the accounts are kept in the project folder's `accounts.json`.
+- 5 failed logins on one connection and the server disconnects it. One account can only sit once in a room.
+- New server messages: `auth` `{ playerId, username, registered }`. `joined` and `lobby.players[]` and
+  `state.heroes[]` now include `playerId`.
+
+## Swarms
+
+`state` includes `level`, `swarm` (number of the swarm fighting, 1-based), `swarms` (how many the level has)
+and `bossArrived`. The next swarm appears when all monsters are defeated; after the last one, the Dungeon
+Master enters as the level's boss (`info`/log: "The Dungeon Master enters the battle as ...").
 
 ## Rules & Reconnect
 
@@ -94,5 +114,6 @@ cmake -S . -B build && cmake --build build --target dungeon_server
 
 ## Known gaps
 
-- No encryption or user accounts. Fine for a course project; don't reuse the protocol for anything sensitive.
+- **No encryption:** ENet sends everything unencrypted, including passwords at login. Fine for a course
+  project, but players must not reuse a real password. Accounts store only salted PBKDF2-SHA256 hashes.
 - Save/load state across server restarts is not implemented yet.

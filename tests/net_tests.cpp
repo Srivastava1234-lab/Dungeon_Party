@@ -59,6 +59,7 @@ int main() {
     try {
         GameData data(GameData::defaultDataDirectory());
         RoomServer server(data, TEST_PORT);
+        server.setLoginRequired(false); // these scenarios test rooms and turns; login has its own tests below
 
         TestClient host, guest, stranger;
         std::vector<TestClient*> all{&host, &guest, &stranger};
@@ -207,10 +208,10 @@ int main() {
         lateDm.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
         pump(server, roles, [&] { return !lateDm.lastOfType(net::msg::ERROR).is_null(); });
         check(lateDm.lastOfType(net::msg::ERROR)["msg"] == "Boss is already the Dungeon Master", "only one player can be DM");
-        lateDm.net.send({{"t", net::msg::ROLE}, {"role", "warrior"}});
+        lateDm.net.send({{"t", net::msg::ROLE}, {"role", "wizard"}}); // the Wizard is playable now
         pump(server, roles, [&] {
             auto lobby = lateDm.lastOfType(net::msg::LOBBY);
-            return !lobby.is_null() && lobby["players"][2]["role"] == "warrior";
+            return !lobby.is_null() && lobby["players"][2]["role"] == "wizard";
         });
 
         heroPlayer.net.send({{"t", net::msg::START}});
@@ -219,6 +220,7 @@ int main() {
         check(dmView["role"] == "dm" && dmView["dm"]["human"] == true, "DM player is the Dungeon Master, not a hero");
         check(dmView["heroes"].size() == 2, "only the two hero players are heroes");
         check(dmView["heroes"][0]["heroId"] == "healer", "healer role gives the healer hero");
+        check(dmView["heroes"][1]["heroId"] == "wizard", "wizard role gives the wizard hero");
 
         // Heroes take their turns
         for (auto* hero : {&heroPlayer, &lateDm}) {
@@ -269,7 +271,7 @@ int main() {
         pump(server, soloList, [&] { auto st = solo.lastOfType(net::msg::STATE); return !st.is_null() && st["round"] == 2; });
         check(solo.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < soloHp, "computer DM's monsters attack back");
 
-        // Play until the boss arrives (level_1: round 4)
+        // Swarms: rounds pass, but the boss only enters after both swarms are defeated
         for (int r = 0; r < 2; ++r) {
             solo.received.clear();
             solo.net.send({{"t", net::msg::END}});
@@ -278,7 +280,10 @@ int main() {
         const json round4 = solo.lastOfType(net::msg::STATE); // keep it alive while looping over it
         bool bossSeen = false;
         for (const auto& m : round4["monsters"]) bossSeen = bossSeen || m["boss"] == true;
-        check(bossSeen, "final boss arrives in round 4");
+        check(round4["round"] == 4 && !bossSeen && round4["bossArrived"] == false,
+              "the boss does not arrive after a fixed number of rounds");
+        check(round4["swarm"] == 1 && round4["swarms"] == 2, "the state reports swarm 1 of 2");
+        check(round4["level"] == 1, "the state reports the level being played");
 
         // ===== Endpoint parsing =====
         {
@@ -386,6 +391,7 @@ int main() {
         // ===== All players drop mid-match: paused during grace, pruned after grace =====
         {
             RoomServer graceServer(data, TEST_PORT + 1, std::chrono::seconds(1));
+            graceServer.setLoginRequired(false);
             TestClient soloDrop;
             std::vector<TestClient*> list{&soloDrop};
             soloDrop.net.connect("127.0.0.1", TEST_PORT + 1);
@@ -447,6 +453,7 @@ int main() {
 
         // ===== Turn timer (a second server where every turn lasts 1 second) =====
         RoomServer fastServer(data, TEST_PORT + 1, 1);
+        fastServer.setLoginRequired(false);
         TestClient slowHero, slowGuest, dmTimer, timerHero;
         std::vector<TestClient*> timed{&slowHero, &slowGuest, &dmTimer, &timerHero};
         for (auto* c : timed) c->net.connect("127.0.0.1", TEST_PORT + 1);
@@ -526,6 +533,7 @@ int main() {
         // ===== Timer + reconnect (Taegan): a paused room must not lose turns =====
         {
             RoomServer pausedServer(data, TEST_PORT + 2, 1, std::chrono::seconds(10)); // 1 s turns, 10 s grace
+            pausedServer.setLoginRequired(false);
             TestClient leaver;
             std::vector<TestClient*> one{&leaver};
             leaver.net.connect("127.0.0.1", TEST_PORT + 2);
@@ -551,6 +559,68 @@ int main() {
             const json resumed = back.lastOfType(net::msg::STATE);
             check(resumed["round"] == roundBefore, "turn timer does not run while the room is paused for reconnects");
             check(resumed["turnMsLeft"].get<int>() > 500, "after rejoining, the turn gets a fresh timer");
+        }
+
+        // ===== Login: accounts with a permanent player ID =====
+        {
+            RoomServer loginServer(data, TEST_PORT + 3); // login required (the default)
+            TestClient alice, mallory, bob;
+            std::vector<TestClient*> clients{&alice, &mallory, &bob};
+            for (auto* c : clients) c->net.connect("127.0.0.1", TEST_PORT + 3);
+            pump(loginServer, clients, [&] {
+                for (auto* c : clients) if (c->net.status() != NetClient::Status::Connected) return false;
+                return true;
+            });
+
+            alice.net.send({{"t", net::msg::CREATE}, {"name", "Alice"}});
+            pump(loginServer, clients, [&] { return !alice.lastOfType(net::msg::ERROR).is_null(); });
+            check(alice.lastOfType(net::msg::ERROR)["msg"] == "Please log in first", "hosting without logging in is refused");
+
+            alice.received.clear();
+            alice.net.send({{"t", net::msg::REGISTER}, {"username", "al"}, {"password", "secret123"}});
+            pump(loginServer, clients, [&] { return !alice.lastOfType(net::msg::ERROR).is_null(); });
+            check(true, "a too short username is refused: " + alice.lastOfType(net::msg::ERROR)["msg"].get<std::string>());
+
+            alice.received.clear();
+            alice.net.send({{"t", net::msg::REGISTER}, {"username", "Alice"}, {"password", "secret123"}});
+            pump(loginServer, clients, [&] { return !alice.lastOfType(net::msg::AUTH).is_null(); });
+            const std::string aliceId = alice.lastOfType(net::msg::AUTH)["playerId"];
+            check(aliceId.size() == 10 && aliceId.rfind("P-", 0) == 0, "registering gives a player ID: " + aliceId);
+
+            mallory.net.send({{"t", net::msg::REGISTER}, {"username", "ALICE"}, {"password", "other123"}});
+            pump(loginServer, clients, [&] { return !mallory.lastOfType(net::msg::ERROR).is_null(); });
+            check(mallory.lastOfType(net::msg::ERROR)["msg"] == "That username is already taken",
+                  "usernames are unique (ignoring upper/lower case)");
+
+            mallory.received.clear();
+            mallory.net.send({{"t", net::msg::LOGIN}, {"username", "alice"}, {"password", "wrong-guess"}});
+            pump(loginServer, clients, [&] { return !mallory.lastOfType(net::msg::ERROR).is_null(); });
+            check(mallory.lastOfType(net::msg::ERROR)["msg"] == "Wrong username or password", "a wrong password is refused");
+
+            bob.net.send({{"t", net::msg::LOGIN}, {"username", "alice"}, {"password", "secret123"}});
+            pump(loginServer, clients, [&] { return !bob.lastOfType(net::msg::AUTH).is_null(); });
+            check(bob.lastOfType(net::msg::AUTH)["playerId"] == aliceId, "logging in again gives the same player ID");
+
+            // Alice hosts; her name comes from the account, not from what the client claims
+            alice.received.clear();
+            alice.net.send({{"t", net::msg::CREATE}, {"name", "TotallyNotAlice"}});
+            pump(loginServer, clients, [&] { return !alice.lastOfType(net::msg::LOBBY).is_null(); });
+            const json aliceLobby = alice.lastOfType(net::msg::LOBBY);
+            check(aliceLobby["players"][0]["name"] == "Alice" && aliceLobby["players"][0]["playerId"] == aliceId,
+                  "the lobby shows the account name and player ID");
+
+            // The same account can't take a second seat in the same room
+            bob.received.clear();
+            bob.net.send({{"t", net::msg::JOIN}, {"code", alice.lastOfType(net::msg::JOINED)["code"]}});
+            pump(loginServer, clients, [&] { return !bob.lastOfType(net::msg::ERROR).is_null(); });
+            check(bob.lastOfType(net::msg::ERROR)["msg"] == "This account is already in the room",
+                  "one account cannot sit in the same room twice");
+
+            // Password guessing gets the connection closed
+            for (int i = 0; i < net::MAX_FAILED_LOGINS; ++i)
+                mallory.net.send({{"t", net::msg::LOGIN}, {"username", "alice"}, {"password", "guess" + std::to_string(i)}});
+            pump(loginServer, clients, [&] { return mallory.net.status() == NetClient::Status::Disconnected; });
+            check(true, "after " + std::to_string(net::MAX_FAILED_LOGINS) + " failed logins the connection is closed");
         }
 
         std::cout << "All network tests passed.\n";

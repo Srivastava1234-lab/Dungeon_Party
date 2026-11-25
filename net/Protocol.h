@@ -32,7 +32,8 @@ constexpr std::size_t MAX_PACKET_BYTES = 16 * 1024; // ENet's default is 32 MB -
 constexpr std::size_t MAX_PLAYERS_PER_ROOM = 6;   // Match allows 1-6 heroes
 constexpr std::size_t ROOM_CODE_LENGTH = 6;
 constexpr std::size_t RECONNECT_TOKEN_LENGTH = 24;
-constexpr int MAX_WRONG_CODES = 5;                // then the server disconnects the peer (stops code guessing)
+constexpr int MAX_WRONG_CODES = 5;
+constexpr int MAX_FAILED_LOGINS = 5;              // then the server disconnects the peer (stops password guessing)                // then the server disconnects the peer (stops code guessing)
 constexpr std::size_t MAX_NAME_LENGTH = 16;
 constexpr int EMPTY_ROOM_GRACE_SECONDS = 60;      // keep an active match alive briefly if everyone disconnects
 
@@ -134,6 +135,8 @@ inline std::string sanitizeName(const std::string& raw) {
 // Message types ("t" field)
 namespace msg {
     // client -> server
+    inline constexpr const char* REGISTER = "register"; // { username, password }   create an account (then logged in)
+    inline constexpr const char* LOGIN    = "login";    // { username, password }   log in; needed before create/join
     inline constexpr const char* CREATE = "create"; // { name, level }              host makes a new room (level optional, default 1)
     inline constexpr const char* JOIN   = "join";   // { name, code }               join an existing room
     inline constexpr const char* REJOIN = "rejoin"; // { code, token }              rejoin a disconnected seat
@@ -146,6 +149,7 @@ namespace msg {
     inline constexpr const char* LEAVE  = "leave";  // {}
 
     // server -> client
+    inline constexpr const char* AUTH   = "auth";   // { playerId, username }       logged in; playerId is permanent
     inline constexpr const char* JOINED = "joined"; // { code, you, token }         you are in a room now
     inline constexpr const char* LOBBY  = "lobby";  // { code, players[], level, levelName } waiting room changed
     inline constexpr const char* STATE  = "state";  // { round, phase, ... }        match state (only YOUR hand)

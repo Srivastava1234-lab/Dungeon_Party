@@ -66,6 +66,7 @@ std::string roleId(LobbyRole role) {
     switch (role) {
         case LobbyRole::Warrior: return "warrior";
         case LobbyRole::Healer:  return "healer";
+        case LobbyRole::Wizard:  return "wizard";
         case LobbyRole::DM:      return net::DM_ROLE;
         default:                 return "";
     }
@@ -74,6 +75,7 @@ std::string roleId(LobbyRole role) {
 LobbyRole roleFromId(const std::string& id) {
     if (id == "warrior") return LobbyRole::Warrior;
     if (id == "healer") return LobbyRole::Healer;
+    if (id == "wizard") return LobbyRole::Wizard;
     if (id == net::DM_ROLE) return LobbyRole::DM;
     return LobbyRole::None;
 }
@@ -82,7 +84,7 @@ const char* roleVoiceFile(LobbyRole role) {
     switch (role) {
         case LobbyRole::Warrior: return "assets/sounds/Warrior.mp3";
         case LobbyRole::Healer:  return "assets/sounds/Healer.mp3";
-        case LobbyRole::Wizard:  return "assets/sounds/Wizard.mp3";       //Not yet created, waiting for heros.json
+        case LobbyRole::Wizard:  return "assets/sounds/Wizard.mp3";       // not recorded yet: plays nothing until the file exists
         case LobbyRole::DM:      return "assets/sounds/DM.mp3";
         default:                 return nullptr;
     }
@@ -295,7 +297,18 @@ int main() {
         dataErrorMessage = std::string("Could not load game data:\n") + e.what();
         std::cerr << dataErrorMessage << "\n";
     }
-    const GLuint battleBackground = loadTexture("assets/Level_1_Artwork.png");
+    const GLuint battleBackground = loadTexture("assets/Level_1_Artwork.png"); // levels without a "background"
+    std::map<int, GLuint> levelBackgrounds;  // level number -> its "background" from the level file
+    if (gameData) {
+        for (int n = 1;; ++n) {
+            try {
+                const LevelDefinition levelDef = gameData->loadLevel(n);
+                if (GLuint tex = loadTexture(levelDef.background)) levelBackgrounds[n] = tex;
+            } catch (const std::exception&) {
+                break;
+            }
+        }
+    }
     const GLuint menuBackground = loadTexture("assets/Menu_Background_AI_Generated.png");
     const GLuint startBackground = loadTexture("assets/Start_Background_AI_Generated.jpg");
     const GLuint lobbyBackground = loadTexture("assets/Lobby_Background_AI_Generated.jpg");
@@ -312,7 +325,10 @@ int main() {
     auto roleTexture = [&](LobbyRole role) -> GLuint {
         if (role == LobbyRole::Warrior) return textureOr0(heroTextures, "warrior");
         if (role == LobbyRole::Healer) return textureOr0(heroTextures, "healer");
-        if (role == LobbyRole::Wizard) return wizardPicture;
+        if (role == LobbyRole::Wizard) {
+            const GLuint finalArt = textureOr0(heroTextures, "wizard"); // heroes.json: assets/Wizard_Artwork.png
+            return finalArt ? finalArt : wizardPicture;
+        }
         if (role == LobbyRole::DM) return textureOr0(monsterTextures, "Final Boss");
         return 0;
     };
@@ -379,7 +395,18 @@ int main() {
     if (defaultServer.empty()) defaultServer = net::trimWhitespace(DUNGEON_PARTY_DEFAULT_SERVER);
 #endif
 
-    char nameBuf[net::MAX_NAME_LENGTH + 1] = "Player";
+    char nameBuf[net::MAX_NAME_LENGTH + 1] = "Player"; // the account's username
+
+    // ---- Login (each player has an account with a permanent player ID on the server)
+    char passBuf[65] = "";        // kept in memory only, never written to disk
+    bool newAccount = false;      // tick "Create a new account" for the first visit to a server
+    bool authSent = false;        // login/register sent on the current connection
+    bool loggedIn = false;        // server accepted it on the current connection
+    std::string myPlayerId;       // "P-K7RM2Q9X", from the server
+    auto authMessage = [&]() {
+        return json{{"t", newAccount ? net::msg::REGISTER : net::msg::LOGIN},
+                    {"username", nameBuf}, {"password", passBuf}};
+    };
     if (!savedSession.playerName.empty()) {
         std::snprintf(nameBuf, sizeof(nameBuf), "%s", savedSession.playerName.c_str());
     }
@@ -432,6 +459,7 @@ int main() {
         roomCode.clear(); myId.clear(); hostId.clear();
         state = nullptr;
         pendingRequest = nullptr;
+        authSent = false; loggedIn = false;
         reconnecting = false;
         reconnectAttempts = 0;
         rejoinSentThisAttempt = false;
@@ -468,6 +496,7 @@ int main() {
         reconnecting = false;
         reconnectAttempts = 0;
         rejoinSentThisAttempt = false;
+        authSent = false; loggedIn = false; // every new connection logs in again
         pendingRequest = std::move(request);
         screen = OnlineScreen::Connecting;
     };
@@ -480,15 +509,17 @@ int main() {
 
         // ---- 2. Network client: once per frame, never blocks
         client.poll();
-        if (screen == OnlineScreen::Connecting && client.status() == NetClient::Status::Connected &&
-            !pendingRequest.is_null()) {
-            client.send(pendingRequest);
-            pendingRequest = nullptr;
+        // Log in first on every connection (also after an automatic reconnect).
+        // The actual request (create / join / rejoin) is sent when the server answers "auth".
+        if (client.status() == NetClient::Status::Connected && !authSent &&
+            (screen == OnlineScreen::Connecting || reconnecting)) {
+            client.send(authMessage());
+            authSent = true;
         }
 
         if (reconnecting) {
             const auto now = std::chrono::steady_clock::now();
-            if (client.status() == NetClient::Status::Connected && !rejoinSentThisAttempt) {
+            if (client.status() == NetClient::Status::Connected && loggedIn && !rejoinSentThisAttempt) {
                 if (state.is_object()) {
                     // match already started, reclaim our seat with the token
                     client.send({{"t", net::msg::REJOIN}, {"code", activeSession.roomCode}, {"token", activeSession.token}});
@@ -504,6 +535,7 @@ int main() {
                 } else {
                     ++reconnectAttempts;
                     rejoinSentThisAttempt = false;
+                    authSent = false; loggedIn = false;
                     nextReconnectAttempt = now + std::chrono::seconds(2);
                     client.connect(activeSession.address, activeSession.port);
                 }
@@ -513,7 +545,16 @@ int main() {
         bool closedByServer = false;
         for (const json& message : client.takeMessages()) {
             const std::string type = strOr(message, "t");
-            if (type == net::msg::JOINED) {
+            if (type == net::msg::AUTH) {
+                loggedIn = true;
+                myPlayerId = strOr(message, "playerId");
+                std::snprintf(nameBuf, sizeof(nameBuf), "%s", strOr(message, "username", nameBuf).c_str());
+                newAccount = false; // the account exists now; reconnects log in normally
+                if (screen == OnlineScreen::Connecting && !pendingRequest.is_null()) {
+                    client.send(pendingRequest);
+                    pendingRequest = nullptr;
+                }
+            } else if (type == net::msg::JOINED) {
                 roomCode = strOr(message, "code");
                 myId = strOr(message, "you");
                 activeSession.roomCode = roomCode;
@@ -653,17 +694,28 @@ int main() {
                 if (helpClicked) ImGui::OpenPopup("How to play");
                 drawHelpPopup();
 
-                // Name field, centred above the two scrolls
-                ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.2f));
+                // Login fields, centred above the two scrolls. The account lives on the server you
+                // host on or join; the first time there, tick "Create a new account".
+                ImGui::PushStyleColor(ImGuiCol_FrameBg,   ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text,      ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.45f, 0.25f, 0.05f, 1.0f));
+                ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.14f));
                 ImGui::SetNextItemWidth(win.x * 0.3f);
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text,    ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
-                ImGui::InputTextWithHint("##name", "Your name", nameBuf, sizeof(nameBuf));
+                ImGui::InputTextWithHint("##name", "Username", nameBuf, sizeof(nameBuf));
+                ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.19f));
+                ImGui::SetNextItemWidth(win.x * 0.3f);
+                ImGui::InputTextWithHint("##password", "Password", passBuf, sizeof(passBuf), ImGuiInputTextFlags_Password);
                 ImGui::PopStyleColor(2);
-                const bool nameFilled = nameBuf[0] != '\0'; // Host and Join only work with a name
+                ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.235f));
+                ImGui::Checkbox("Create a new account", &newAccount);
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.7f, 0.85f), "(don't reuse a real password: traffic is not encrypted)");
+                // Host and Join only work once username and password are filled in
+                const bool nameFilled = nameBuf[0] != '\0' && passBuf[0] != '\0';
 
                 if (!notice.empty()) {
-                    ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.26f));
+                    ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.28f));
                     ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
                 }
 
@@ -710,6 +762,7 @@ int main() {
                         if (!localServer && gameData) {
                             try {
                                 localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(std::clamp(port, 1, 65535)));
+                                localServer->setAccountsFile(projectPath("accounts.json")); // ignored by git
                             } catch (const std::exception& e) {
                                 // Port already taken (e.g. another window on this computer is hosting):
                                 // we can still create a room on that server.
@@ -802,6 +855,8 @@ int main() {
                 ImGui::TextColored(color, "%s%s", strOr(p, "name").c_str(), id == hostId ? " (host)" : "");
                 ImGui::SameLine(190);
                 ImGui::TextColored(color, "%s", roleName(role));
+                // Permanent account ID (login), small and dimmed under the name
+                if (!strOr(p, "playerId").empty()) ImGui::TextDisabled("  %s", strOr(p, "playerId").c_str());
             }
             ImGui::EndChild();
             popMenuStyle();
@@ -823,8 +878,7 @@ int main() {
             const ImVec2 cardSize(180, 260);
             const LobbyRole roles[4] = {LobbyRole::Warrior, LobbyRole::Healer, LobbyRole::Wizard, LobbyRole::DM};
             for (LobbyRole role : roles) {
-                const bool noHeroData = role == LobbyRole::Wizard; // no wizard in heroes.json yet
-                const bool locked = noHeroData || (role == LobbyRole::DM && !dmTakenBy.empty());
+                const bool locked = role == LobbyRole::DM && !dmTakenBy.empty(); // every hero is playable now
                 const bool chosen = role == myRole;
 
                 ImGui::BeginGroup();
@@ -865,8 +919,7 @@ int main() {
                     ImGui::PopFont();
                 }
                 std::string status;
-                if (noHeroData) status = "coming soon";
-                else if (role == LobbyRole::DM && !dmTakenBy.empty()) status = "taken by " + dmTakenBy;
+                if (role == LobbyRole::DM && !dmTakenBy.empty()) status = "taken by " + dmTakenBy;
                 if (!status.empty()) {
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cardSize.x - ImGui::CalcTextSize(status.c_str()).x) * 0.5f);
                     ImGui::TextDisabled("%s", status.c_str());
@@ -969,6 +1022,15 @@ int main() {
                 else instruction = "Click a monster to attack.";
             }
             ImGui::TextUnformatted(instruction.c_str());
+            // Swarm progress: "Swarm 1 of 2", then the Dungeon Master's boss
+            if (boolOr(state, "bossArrived")) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.25f, 1.0f), "  |  The Dungeon Master is on the battlefield!");
+            } else if (intOr(state, "swarms") > 0) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "  |  Swarm %d of %d - the Dungeon Master waits",
+                                   intOr(state, "swarm"), intOr(state, "swarms"));
+            }
             if (!infoText.empty() && glfwGetTime() < infoUntil) {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.30f, 1.0f), "  %s", infoText.c_str());
@@ -999,9 +1061,12 @@ int main() {
             // ---- Battlefield
             ImGui::BeginChild("Battlefield", ImVec2(0, ImGui::GetContentRegionAvail().y - 222), true, ImGuiWindowFlags_NoScrollbar);
             const ImVec2 fieldSize = ImGui::GetContentRegionAvail();
-            if (battleBackground) {
+            // The background of the level being played (level file "background"), else the default.
+            GLuint background = battleBackground;
+            if (auto it = levelBackgrounds.find(intOr(state, "level", 1)); it != levelBackgrounds.end()) background = it->second;
+            if (background) {
                 const ImVec2 origin = ImGui::GetCursorScreenPos();
-                ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)battleBackground, origin,
+                ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)background, origin,
                                                      ImVec2(origin.x + fieldSize.x, origin.y + fieldSize.y));
             }
             int livingMonsters = 0;

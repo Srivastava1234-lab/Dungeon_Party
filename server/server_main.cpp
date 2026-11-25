@@ -4,7 +4,9 @@
 //   dungeon_server                     port 7777, data folder baked in by CMake
 //   dungeon_server <port>
 //   dungeon_server <port> <dataFolder>  use this on a cloud VM where the build path doesn't exist
-//   dungeon_server <port> <dataFolder> <seconds>  every turn lasts <seconds> (default: rules.json)
+//   dungeon_server <port> <dataFolder> <seconds>  every turn lasts <seconds> (0 = rules.json)
+//   dungeon_server <port> <dataFolder> <seconds> <accountsFile>  where player accounts are saved
+//                                                                 (default: accounts.json in the current folder)
 //
 // Players on other networks connect to this machine's public IP (or domain) on UDP <port>.
 
@@ -28,12 +30,14 @@ int main(int argc, char** argv) {
     std::uint16_t port = net::DEFAULT_PORT;
     std::string dataDir = GameData::defaultDataDirectory();
     int turnSeconds = 0; // 0 = use the time limits from rules.json
+    std::string accountsFile = "accounts.json";
     try {
         if (argc > 1) port = static_cast<std::uint16_t>(std::stoi(argv[1]));
         if (argc > 2) dataDir = argv[2];
         if (argc > 3) turnSeconds = std::stoi(argv[3]);
+        if (argc > 4) accountsFile = argv[4];
     } catch (const std::exception&) {
-        std::cerr << "Usage: dungeon_server [port] [dataFolder] [turnSeconds]\n";
+        std::cerr << "Usage: dungeon_server [port] [dataFolder] [turnSeconds] [accountsFile]\n";
         return 2;
     }
 
@@ -43,6 +47,8 @@ int main(int argc, char** argv) {
     try {
         GameData gameData(dataDir);
         RoomServer server(gameData, port, turnSeconds);
+        server.setAccountsFile(accountsFile);
+        std::cout << "Player accounts: " << accountsFile << "\n";
         std::cout << "Dungeon Party server listening on UDP port " << port
                   << " (protocol v" << net::PROTOCOL_VERSION
                   << ", reconnect grace " << net::EMPTY_ROOM_GRACE_SECONDS << "s, Ctrl+C to stop)\n";

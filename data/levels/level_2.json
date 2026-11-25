@@ -1,38 +1,60 @@
 {
-  "_note": "TEMPORARY (SCRUM-63): copy of level 1 to test level selection. Replace with the real level 2 (Huelya, task 11).",
+  "_note": "Level 2: mixed swarms (skeletons, goblins, a lich), then the Dungeon Master enters as the Red Dragon. Replaces the temporary copy of level 1 (SCRUM-63).",
   "number": 2,
-  "name": "Level 2 (TEMPORARY)",
-  "maxRounds": 8,
-  "boss": {
-    "monster": "final_boss",
-    "arrivalRound": 4
-  },
+  "name": "Level 2: The Dragon's Lair",
+  "maxRounds": 14,
+  "background": "assets/Level_2_Artwork.png",
   "defaultHeroes": [
     "warrior"
   ],
-  "monsters": [
+  "swarms": [
     {
-      "monster": "goblin",
-      "countPerHero": 1
+      "name": "Crypt guards",
+      "monsters": [
+        {
+          "monster": "skeleton",
+          "countPerHero": 1
+        },
+        {
+          "monster": "goblin",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "The Lich's court",
+      "monsters": [
+        {
+          "monster": "lich",
+          "count": 1
+        },
+        {
+          "monster": "skeleton",
+          "countPerHero": 1
+        }
+      ]
     }
   ],
-  "temporary": true,
+  "boss": {
+    "monster": "dragon"
+  },
   "dungeonMaster": {
-    "maxMana": 10,
+    "maxMana": 12,
     "startingDeck": [
       {
         "card": "goblin_slash",
-        "count": 6
+        "count": 5
       },
       {
         "card": "heavy_smash",
-        "count": 3
+        "count": 5
       },
       {
         "card": "weakening_curse",
         "count": 3
       }
     ],
-    "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
-  }
+    "_note": "Placeholder values (Sprint 3: swarms and levels). Confirm with Irma."
+  },
+  "temporary": true
 }
