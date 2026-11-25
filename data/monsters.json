@@ -23,32 +23,41 @@
     {
       "id": "skeleton",
       "name": "Skeleton",
-      "maxHealth": 70,
-      "attackPower": 12,
+      "maxHealth": 60,
+      "attackPower": 10,
       "boss": false,
-      "image": "assets/skeleton_Artwork_Final.png",
+      "image": "assets/Skeleton_Artwork.png",
       "temporary": true,
-      "_note": "Placeholder values (Sprint 3: swarms and levels). Confirm with Irma."
+      "_note": "Draft values from the team's New levels designs and monster stats document."
+    },
+    {
+      "id": "orc",
+      "name": "Orc",
+      "maxHealth": 170,
+      "attackPower": 22,
+      "boss": false,
+      "image": "assets/Orc_Artwork.png",
+      "temporary": true
     },
     {
       "id": "lich",
       "name": "Lich",
-      "maxHealth": 120,
-      "attackPower": 18,
-      "boss": false,
-      "image": "assets/Lich_Artwork_Final.png",
+      "attackPower": 22,
+      "boss": true,
+      "image": "assets/Lich_Artwork.png",
       "temporary": true,
-      "_note": "Placeholder values (Sprint 3: swarms and levels). Confirm with Irma."
+      "_note": "Draft values from the team's New levels designs and monster stats document.",
+      "healthPerHero": 110
     },
     {
       "id": "dragon",
-      "name": "Red Dragon",
-      "healthPerHero": 120,
-      "attackPower": 25,
+      "name": "Dragon",
+      "healthPerHero": 140,
+      "attackPower": 28,
       "boss": true,
-      "image": "assets/Dragon_Artwork_Final.png",
+      "image": "assets/Dragon_Artwork.png",
       "temporary": true,
-      "_note": "Placeholder values (Sprint 3: swarms and levels). Confirm with Irma. Boss of level 2: the form the Dungeon Master takes after the swarms."
+      "_note": "Draft values from the team's New levels designs and monster stats document."
     }
   ]
 }

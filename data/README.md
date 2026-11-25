@@ -306,3 +306,35 @@ The tests use temporary copies, leaving the real data files unchanged. They cove
 hero/DM effects, missing or malformed files, invalid fields and numbers, duplicate IDs,
 unknown effects, and invalid hero deck references. Loading a valid effect does not mean
 its gameplay behaviour is implemented.
+
+
+## SCRUM-62/64: supplied level and monster draft
+
+These entries follow the team document *New levels designs and monster stats*.
+All supplied values remain `temporary: true`.
+
+| Level | Monsters per hero | Boss | Arrival round | DM mana | DM deck |
+|---|---|---|---|---|---|
+| 1 (existing) | 1 Goblin | Final Boss | 4 | 10 | 12 Monster Attack |
+| 2: The Crypt | 2 Skeletons | Lich | 5 | 12 | 12 Monster Attack |
+| 3: The Dragon's Lair | 1 Goblin + 1 Orc | Dragon | 6 | 15 | 12 Monster Attack |
+
+The new level JSON files use the document's `monsters` lists and fixed
+`boss.arrivalRound`, supported by the existing loader. They do not add extra
+swarms. The generic swarm engine remains available for other level files.
+
+`monster_attack` is restored from the project's existing definition in commit
+`6eeec1d`: mana cost 3 and damage 12. The supplied document refers to that card;
+no new card cost was chosen for this update.
+
+As the document states, `maxRounds: 30` in levels 2 and 3 is a placeholder.
+The engine still enforces it as a real round limit. Level 1 retains its existing
+round-limit field because the document does not supply a replacement.
+Regular monsters still deal the DM attack card's damage; their individual
+`attackPower` values are stored as specified but are not used by the current
+attack code. Boss attacks use their configured attack power.
+
+The three supplied Skeleton, Lich and Dragon images are also available under
+the filenames used in the document. `assets/Orc_Artwork.png` is still missing;
+no replacement monster image has been assigned. New levels use the existing
+default background because the document does not specify backgrounds.

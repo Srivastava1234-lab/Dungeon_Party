@@ -297,7 +297,7 @@ int main() {
         pump(server, soloList, [&] { auto st = solo.lastOfType(net::msg::STATE); return !st.is_null() && st["round"] == 2; });
         check(solo.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < soloHp, "computer DM's monsters attack back");
 
-        // Swarms: rounds pass, but the boss only enters after both swarms are defeated
+        // Level 1 follows the supplied design: its boss enters in round 4.
         for (int r = 0; r < 2; ++r) {
             solo.received.clear();
             solo.net.send({{"t", net::msg::END}});
@@ -306,9 +306,9 @@ int main() {
         const json round4 = solo.lastOfType(net::msg::STATE); // keep it alive while looping over it
         bool bossSeen = false;
         for (const auto& m : round4["monsters"]) bossSeen = bossSeen || m["boss"] == true;
-        check(round4["round"] == 4 && !bossSeen && round4["bossArrived"] == false,
-              "the boss does not arrive after a fixed number of rounds");
-        check(round4["swarm"] == 1 && round4["swarms"] == 2, "the state reports swarm 1 of 2");
+        check(round4["round"] == 4 && bossSeen && round4["bossArrived"] == true,
+              "the level 1 boss arrives in round 4");
+        check(round4["swarm"] == 1 && round4["swarms"] == 1, "the level has the supplied single monster group");
         check(round4["level"] == 1, "the state reports the level being played");
 
         // ===== Endpoint parsing =====
@@ -595,7 +595,7 @@ int main() {
                                         savedMatchIds.push_back(id);
                                     });
             std::string heroAccountId, dmAccountId, previousMatchId;
-            for (const int level : {1, 2}) {
+            for (const int level : {1, 2, 3}) {
                 TestClient finisher, opponent;
                 std::vector<TestClient*> clients{&finisher, &opponent};
                 for (auto* client : clients) client->net.connect("127.0.0.1", TEST_PORT + 4);
@@ -641,7 +641,8 @@ int main() {
                 finisher.net.send({{"t", net::msg::START}});
                 pump(resultServer, clients, [&] { return !finisher.lastOfType(net::msg::STATE).is_null(); });
                 check(savedMatchIds.size() == before, "an unfinished match is not saved");
-                const int turnLimit = data.loadLevel(level).maxRounds * 2;
+                const auto definition = data.loadLevel(level);
+                const int turnLimit = definition.maxRounds * 2;
                 for (int turn = 0; turn < turnLimit && finisher.lastOfType(net::msg::STATE)["winner"].is_null(); ++turn) {
                     auto* active = finisher.lastOfType(net::msg::STATE)["active"] == seatId ? &finisher : &opponent;
                     finisher.received.clear();
@@ -652,6 +653,19 @@ int main() {
                                !active->lastOfType(net::msg::ERROR).is_null();
                     });
                     check(active->lastOfType(net::msg::ERROR).is_null(), "authenticated match progresses normally");
+                    const auto state = finisher.lastOfType(net::msg::STATE);
+                    const bool expectedBoss = state["round"].get<int>() >= definition.bossArrivalRound;
+                    check(state["bossArrived"] == expectedBoss,
+                          "the selected level spawns its boss in the configured round");
+                    if (expectedBoss) {
+                        bool foundBoss = false;
+                        const auto& boss = data.getMonster(definition.bossId);
+                        for (const auto& monster : state["monsters"])
+                            if (monster["boss"] == true) {
+                                foundBoss = monster["name"] == boss.name && monster["maxHp"] == boss.healthPerHero;
+                            }
+                        check(foundBoss, "the selected level uses its boss kind and health per hero");
+                    }
                 }
                 check(!finisher.lastOfType(net::msg::STATE)["winner"].is_null(), "network match finishes");
                 check(savedMatchIds.size() == before + 1, "finished network match is saved once");
@@ -672,7 +686,7 @@ int main() {
                     check(previous && previous->players.size() == 2,
                           "the previous match still loads independently for the same accounts");
                     for (const auto& player : previous->players)
-                        if (player.id == heroId) check(player.role == "warrior", "old results retain the hero role from that match");
+                        if (player.id == heroId) check(player.role == (level == 2 ? "warrior" : "wizard"), "old results retain the hero role from that match");
                 }
                 previousMatchId = id;
                 for (auto* client : clients) client->net.disconnect();

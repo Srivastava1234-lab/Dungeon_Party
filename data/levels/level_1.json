@@ -1,5 +1,5 @@
 {
-  "_note": "Two swarms, then the Dungeon Master enters as the Final Boss.",
+  "_note": "Existing level updated to the team's draft: one Goblin per hero, Final Boss in round 4, twelve Monster Attack cards.",
   "number": 1,
   "name": "Level 1: The Old Dungeon",
   "maxRounds": 12,
@@ -7,50 +7,24 @@
   "defaultHeroes": [
     "warrior"
   ],
-  "swarms": [
-    {
-      "name": "Goblin raiders",
-      "monsters": [
-        {
-          "monster": "goblin",
-          "countPerHero": 1
-        }
-      ]
-    },
-    {
-      "name": "Bone patrol",
-      "monsters": [
-        {
-          "monster": "goblin",
-          "countPerHero": 1
-        },
-        {
-          "monster": "skeleton",
-          "count": 1
-        }
-      ]
-    }
-  ],
   "boss": {
-    "monster": "final_boss"
+    "monster": "final_boss",
+    "arrivalRound": 4
   },
   "dungeonMaster": {
     "maxMana": 10,
     "startingDeck": [
       {
-        "card": "goblin_slash",
-        "count": 6
-      },
-      {
-        "card": "heavy_smash",
-        "count": 3
-      },
-      {
-        "card": "weakening_curse",
-        "count": 3
+        "card": "monster_attack",
+        "count": 12
       }
-    ],
-    "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
+    ]
   },
-  "temporary": true
+  "temporary": true,
+  "monsters": [
+    {
+      "monster": "goblin",
+      "countPerHero": 1
+    }
+  ]
 }
