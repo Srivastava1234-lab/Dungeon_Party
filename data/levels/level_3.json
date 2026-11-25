@@ -3,8 +3,7 @@
   "name": "The Dragon's Lair",
   "maxRounds": 30,
   "boss": {
-    "monster": "dragon",
-    "arrivalRound": 6
+    "monster": "dragon"
   },
   "defaultHeroes": [
     "warrior"
@@ -28,5 +27,6 @@
       }
     ]
   },
-  "temporary": true
+  "temporary": true,
+  "_note": "Monster composition and values follow the supplied draft. Per Akshat's newer clarification, the boss enters after the monster group is defeated."
 }

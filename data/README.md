@@ -310,31 +310,32 @@ its gameplay behaviour is implemented.
 
 ## SCRUM-62/64: supplied level and monster draft
 
-These entries follow the team document *New levels designs and monster stats*.
-All supplied values remain `temporary: true`.
+Monster composition and stats follow the team document *New levels designs and
+monster stats*. All supplied values remain `temporary: true`.
 
-| Level | Monsters per hero | Boss | Arrival round | DM mana | DM deck |
+| Level | Monsters per hero | Boss | Boss arrival | DM mana | DM deck |
 |---|---|---|---|---|---|
-| 1 (existing) | 1 Goblin | Final Boss | 4 | 10 | 12 Monster Attack |
-| 2: The Crypt | 2 Skeletons | Lich | 5 | 12 | 12 Monster Attack |
-| 3: The Dragon's Lair | 1 Goblin + 1 Orc | Dragon | 6 | 15 | 12 Monster Attack |
+| 1 (existing) | 1 Goblin | Final Boss | After the monster group | 10 | 12 Monster Attack |
+| 2: The Crypt | 2 Skeletons | Lich | After the monster group | 12 | 12 Monster Attack |
+| 3: The Dragon's Lair | 1 Goblin + 1 Orc | Dragon | After the monster group | 15 | 12 Monster Attack |
 
-The new level JSON files use the document's `monsters` lists and fixed
-`boss.arrivalRound`, supported by the existing loader. They do not add extra
-swarms. The generic swarm engine remains available for other level files.
+Akshat's newer team clarification (25 November 2026) replaces the document's
+fixed boss arrival rounds. The level files omit `boss.arrivalRound`, so the
+existing swarm engine releases the boss after the monster group is defeated.
+The document's `monsters` lists remain single groups; no extra monsters are added.
 
 `monster_attack` is restored from the project's existing definition in commit
-`6eeec1d`: mana cost 3 and damage 12. The supplied document refers to that card;
-no new card cost was chosen for this update.
+`6eeec1d`: mana cost 3 and damage 12. Regular monsters deal the DM card's damage,
+as Kagan clarified; their individual `attackPower` values remain in the data.
+Boss attacks use their configured attack power.
 
-As the document states, `maxRounds: 30` in levels 2 and 3 is a placeholder.
-The engine still enforces it as a real round limit. Level 1 retains its existing
-round-limit field because the document does not supply a replacement.
-Regular monsters still deal the DM attack card's damage; their individual
-`attackPower` values are stored as specified but are not used by the current
-attack code. Boss attacks use their configured attack power.
+The round-limit removal mentioned by Akshat is not yet present in the checked
+main commit `fc07c44`: the engine still enforces the `maxRounds` field.
+Levels 2 and 3 retain the document's placeholder 30, and level 1 retains its
+existing value. This still needs reconciling with Akshat's updated code.
 
-The three supplied Skeleton, Lich and Dragon images are also available under
-the filenames used in the document. `assets/Orc_Artwork.png` is still missing;
-no replacement monster image has been assigned. New levels use the existing
-default background because the document does not specify backgrounds.
+Suat clarified that the existing Goblin artwork is used for Orc. The Orc entry
+therefore uses `assets/Goblin_Artwork.png`; its name and stats remain those from
+the draft. The existing Skeleton, Lich and Dragon images are also available
+under the document's filenames. New levels use the default background because
+the document does not specify backgrounds.

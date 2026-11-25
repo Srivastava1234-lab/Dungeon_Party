@@ -1,5 +1,5 @@
 {
-  "_note": "Existing level updated to the team's draft: one Goblin per hero, Final Boss in round 4, twelve Monster Attack cards.",
+  "_note": "Monster composition and values follow the supplied draft. Per Akshat's newer clarification, the boss enters after the monster group is defeated.",
   "number": 1,
   "name": "Level 1: The Old Dungeon",
   "maxRounds": 12,
@@ -8,8 +8,7 @@
     "warrior"
   ],
   "boss": {
-    "monster": "final_boss",
-    "arrivalRound": 4
+    "monster": "final_boss"
   },
   "dungeonMaster": {
     "maxMana": 10,

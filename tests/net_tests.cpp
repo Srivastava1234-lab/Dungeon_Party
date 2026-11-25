@@ -297,7 +297,7 @@ int main() {
         pump(server, soloList, [&] { auto st = solo.lastOfType(net::msg::STATE); return !st.is_null() && st["round"] == 2; });
         check(solo.lastOfType(net::msg::STATE)["heroes"][0]["hp"] < soloHp, "computer DM's monsters attack back");
 
-        // Level 1 follows the supplied design: its boss enters in round 4.
+        // The boss waits for the monster group to be defeated, regardless of the round.
         for (int r = 0; r < 2; ++r) {
             solo.received.clear();
             solo.net.send({{"t", net::msg::END}});
@@ -306,8 +306,8 @@ int main() {
         const json round4 = solo.lastOfType(net::msg::STATE); // keep it alive while looping over it
         bool bossSeen = false;
         for (const auto& m : round4["monsters"]) bossSeen = bossSeen || m["boss"] == true;
-        check(round4["round"] == 4 && bossSeen && round4["bossArrived"] == true,
-              "the level 1 boss arrives in round 4");
+        check(round4["round"] == 4 && !bossSeen && round4["bossArrived"] == false,
+              "the level 1 boss waits while its monster group is alive");
         check(round4["swarm"] == 1 && round4["swarms"] == 1, "the level has the supplied single monster group");
         check(round4["level"] == 1, "the state reports the level being played");
 
@@ -647,6 +647,17 @@ int main() {
                     auto* active = finisher.lastOfType(net::msg::STATE)["active"] == seatId ? &finisher : &opponent;
                     finisher.received.clear();
                     opponent.received.clear();
+                    if (active == &opponent) {
+                        opponent.net.send({{"t", net::msg::COMMAND}, {"card", 0}, {"monster", 0}, {"hero", 0}});
+                        pump(resultServer, clients, [&] {
+                            return !opponent.lastOfType(net::msg::STATE).is_null() ||
+                                   !opponent.lastOfType(net::msg::ERROR).is_null();
+                        });
+                        check(opponent.lastOfType(net::msg::ERROR).is_null(),
+                              "the DM can attack to finish the match without relying on a round limit");
+                        finisher.received.clear();
+                        opponent.received.clear();
+                    }
                     active->net.send({{"t", net::msg::END}});
                     pump(resultServer, clients, [&] {
                         return !finisher.lastOfType(net::msg::STATE).is_null() ||
@@ -654,18 +665,8 @@ int main() {
                     });
                     check(active->lastOfType(net::msg::ERROR).is_null(), "authenticated match progresses normally");
                     const auto state = finisher.lastOfType(net::msg::STATE);
-                    const bool expectedBoss = state["round"].get<int>() >= definition.bossArrivalRound;
-                    check(state["bossArrived"] == expectedBoss,
-                          "the selected level spawns its boss in the configured round");
-                    if (expectedBoss) {
-                        bool foundBoss = false;
-                        const auto& boss = data.getMonster(definition.bossId);
-                        for (const auto& monster : state["monsters"])
-                            if (monster["boss"] == true) {
-                                foundBoss = monster["name"] == boss.name && monster["maxHp"] == boss.healthPerHero;
-                            }
-                        check(foundBoss, "the selected level uses its boss kind and health per hero");
-                    }
+                    check(state["bossArrived"] == false,
+                          "boss arrival waits for the living monster group on every level");
                 }
                 check(!finisher.lastOfType(net::msg::STATE)["winner"].is_null(), "network match finishes");
                 check(savedMatchIds.size() == before + 1, "finished network match is saved once");

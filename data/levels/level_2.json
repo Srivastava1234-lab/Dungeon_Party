@@ -3,8 +3,7 @@
   "name": "The Crypt",
   "maxRounds": 30,
   "boss": {
-    "monster": "lich",
-    "arrivalRound": 5
+    "monster": "lich"
   },
   "defaultHeroes": [
     "warrior"
@@ -24,5 +23,6 @@
       }
     ]
   },
-  "temporary": true
+  "temporary": true,
+  "_note": "Monster composition and values follow the supplied draft. Per Akshat's newer clarification, the boss enters after the monster group is defeated."
 }

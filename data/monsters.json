@@ -36,8 +36,9 @@
       "maxHealth": 170,
       "attackPower": 22,
       "boss": false,
-      "image": "assets/Orc_Artwork.png",
-      "temporary": true
+      "image": "assets/Goblin_Artwork.png",
+      "temporary": true,
+      "_note": "Uses the existing Goblin artwork for Orc, as clarified by Suat. Stats remain those in the supplied draft."
     },
     {
       "id": "lich",
