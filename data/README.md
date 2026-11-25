@@ -109,8 +109,8 @@ Sprint 1 has exactly one card: the attack card `strike`.
 | `startingDeck[].count` | whole number | 1 or more | How many copies |
 | `temporary` | true/false | required | `true` = values not final yet |
 
-Sprint 1: **WARRIOR is the only playable hero**, so `heroes.json` only contains the warrior.
-`RANGER` and `CLERIC` are accepted class names for later sprints.
+Playable heroes: **Warrior**, **Healer** (`CLERIC`) and **Wizard** (`WIZARD`, same cards as the Warrior).
+`RANGER` is accepted as a class name but has no hero subclass yet.
 
 > **CLERIC vs HEALER (known inconsistency):** the team uses `CLERIC` (Vision document,
 > UML OCL constraints, UML persistence diagram, Sprint 1 requirements). Kagan's `Types.h`
@@ -188,15 +188,23 @@ Notes:
 ## levels/level_N.json
 
 One file per level. The file name number and `number` inside the file must match
-(`level_1.json` → `"number": 1`).
+(`level_1.json` → `"number": 1`). New level files appear in the level selection automatically.
 
 ```json
 {
-  "number": 1,
-  "name": "Level 1",
-  "maxRounds": 3,
+  "number": 2,
+  "name": "Level 2: The Dragon's Lair",
+  "maxRounds": 14,
+  "background": "assets/Level_2_Artwork.png",
   "defaultHeroes": ["warrior"],
-  "monsters": [ { "monster": "goblin", "countPerHero": 1 } ],
+  "swarms": [
+    { "name": "Crypt guards",
+      "monsters": [ { "monster": "skeleton", "countPerHero": 1 }, { "monster": "goblin", "count": 1 } ] },
+    { "name": "The Lich's court",
+      "monsters": [ { "monster": "lich", "count": 1 }, { "monster": "skeleton", "countPerHero": 1 } ] }
+  ],
+  "boss": { "monster": "dragon" },
+  "dungeonMaster": { "maxMana": 12, "startingDeck": [ { "card": "goblin_slash", "count": 5 } ] },
   "temporary": true
 }
 ```
@@ -206,17 +214,30 @@ One file per level. The file name number and `number` inside the file must match
 | `number` | whole number | 1 or more, same as file name | Level number |
 | `name` | text | not empty | Name shown in the game |
 | `maxRounds` | whole number | 1 or more | Round limit: the DM side wins when it is reached (`Match::maxRounds`) |
-| `defaultHeroes` | list of hero ids | at least 1, each must exist in `heroes.json` | Heroes used when there is no role selection yet (Sprint 1 only) |
-| `monsters` | list | at least 1 entry | Monster kinds that appear in this level |
-| `monsters[].monster` | text | must exist in `monsters.json` | Which monster |
-| `monsters[].countPerHero` | whole number | 1 or more | How many of this monster appear **per hero player** |
+| `background` | text (path) | optional, use `/` | Battle background for this level. Missing = `assets/Level_1_Artwork.png` |
+| `defaultHeroes` | list of hero ids | at least 1, each must exist in `heroes.json` | Hero for players who don't pick a role |
+| `swarms` | list | at least 1 swarm | The monster waves, in order (see below) |
+| `swarms[].name` | text | optional | Shown in the battle log ("Swarm 2 of 2 appears: The Lich's court") |
+| `swarms[].monsters` | list | at least 1 entry | The monsters of this swarm; **different kinds can be mixed** |
+| `...monsters[].monster` | text | must exist in `monsters.json`, not a boss | Which monster |
+| `...monsters[].countPerHero` | whole number | 0 or more | How many appear **per hero player** |
+| `...monsters[].count` | whole number | 0 or more | How many appear **in addition**, independent of the number of heroes |
+| `boss` | object | optional, `monster` must be a boss | The form the Dungeon Master takes when he enters the battle |
+| `boss.arrivalRound` | whole number | optional | Only for older levels: boss arrives in this round instead of after the swarms |
+| `dungeonMaster` | object | optional | The DM's mana and starting deck (DUNGEON_MASTER cards only) |
 | `temporary` | true/false | required | `true` = values not final yet |
 
-A level stores **no fixed total number of monsters** and **no grid, tiles or positions**.
-The match setup works out the number of monsters as `countPerHero × number of hero players`.
+`countPerHero` + `count` must be at least 1 for every monster line.
 
-`assets/Level_1_Artwork.png` exists, but a level has no picture field yet, because the Sprint 1
-requirements only ask for hero and monster pictures.
+**How swarms work:** the match starts with swarm 1. When every monster on the battlefield is
+defeated, the next swarm appears. After the last swarm, the Dungeon Master enters as the `boss`
+monster. The heroes win only when the boss is defeated too. Without `boss.arrivalRound` the boss
+never arrives after a fixed number of rounds.
+
+Older files with a single `"monsters": [...]` list instead of `"swarms"` still work: that list is one swarm.
+
+
+The match setup calculates each monster count as `countPerHero × number of hero players + count`.
 
 ---
 
@@ -259,7 +280,7 @@ entry once **all** its values are final, and update this table.
 ## How to add new data
 
 - **New card:** add an entry to `cards.json`. No C++ change is needed if the effect already exists.
-- **New hero class:** add an entry to `heroes.json` (the loader accepts `WARRIOR`, `RANGER`, `CLERIC`, `WIZARD`; the server has subclasses for Warrior, Healer and Wizard).
+- **New hero class:** add an entry to `heroes.json` (`WARRIOR`, `RANGER`, `CLERIC`, `WIZARD`; a new class also needs a `Hero` subclass).
 - **New monster kind:** add an entry to `monsters.json`.
 - **New level:** copy `levels/level_1.json` to `levels/level_2.json` and change `number` to `2`.
 

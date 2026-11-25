@@ -1,5 +1,5 @@
 {
-  "_note": "Hero definitions (SCRUM-5). Sprint 1: WARRIOR is the only playable hero. Entries with \"temporary\": true are not confirmed as final yet.",
+  "_note": "Hero definitions (SCRUM-5). Playable: Warrior, Healer (CLERIC) and Wizard. Entries with \"temporary\": true are not confirmed as final yet.",
   "heroes": [
     {
       "id": "warrior",
@@ -60,6 +60,34 @@
       ],
       "temporary": true,
       "_note": "Placeholder values (Sprint 2 networking): needed so the Healer role in the lobby works. Confirm with Irma."
+    },
+    {
+      "id": "wizard",
+      "name": "Wizard",
+      "heroClass": "WIZARD",
+      "maxHealth": 80,
+      "maxMana": 50,
+      "image": "assets/Wizard_Artwork.png",
+      "startingDeck": [
+        {
+          "card": "strike",
+          "count": 2
+        },
+        {
+          "card": "fireball",
+          "count": 1
+        },
+        {
+          "card": "frost_bolt",
+          "count": 1
+        },
+        {
+          "card": "holy_lance",
+          "count": 1
+        }
+      ],
+      "temporary": true,
+      "_note": "Uses the same cards as the other heroes (same deck as the Warrior). Placeholder values (Sprint 3: swarms and levels). Confirm with Irma."
     }
   ]
 }

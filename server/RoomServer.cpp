@@ -141,6 +141,8 @@ void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
     }
     const std::string type = readString(message, "t");
 
+    if (type == net::msg::REGISTER) return handleAuth(peer, message, true);
+    if (type == net::msg::LOGIN) return handleAuth(peer, message, false);
     if (type == net::msg::CREATE) return handleCreate(peer, message);
     if (type == net::msg::JOIN) return handleJoin(peer, message);
     if (type == net::msg::REJOIN) return handleRejoin(peer, message);
@@ -160,10 +162,51 @@ void RoomServer::onPacket(ENetPeer* peer, const ENetPacket* packet) {
     sendError(peer, "Unknown message type");
 }
 
+// ===================== Accounts =====================
+
+void RoomServer::handleAuth(ENetPeer* peer, const json& message, bool registering) {
+    PeerInfo& info = peers[peer];
+    if (!info.playerId.empty()) return sendError(peer, "You are already logged in");
+
+    const std::string username = readString(message, "username");
+    const std::string password = readString(message, "password");
+    const AccountStore::Result result = registering ? accounts->registerAccount(username, password)
+                                                    : accounts->login(username, password);
+    if (!result.ok) {
+        // A limit on failed attempts per connection, so passwords can't be guessed quickly.
+        if (!registering && ++info.failedLogins >= net::MAX_FAILED_LOGINS) {
+            sendError(peer, "Too many failed logins");
+            enet_peer_disconnect_later(peer, 0);
+        } else {
+            sendError(peer, result.error);
+        }
+        return;
+    }
+    info.playerId = result.account.playerId;
+    info.username = result.account.username;
+    std::cout << (registering ? "New account " : "Login ") << info.username << " (" << info.playerId << ")\n";
+    send(peer, {{"t", net::msg::AUTH}, {"playerId", info.playerId}, {"username", info.username},
+                {"registered", registering}});
+}
+
+bool RoomServer::ensureLoggedIn(ENetPeer* peer) {
+    if (!loginRequired || !peers[peer].playerId.empty()) return true;
+    sendError(peer, "Please log in first");
+    return false;
+}
+
+// Logged-in players always appear under their account name, so nobody can pose as someone else.
+std::string RoomServer::displayNameFor(ENetPeer* peer, const json& message) const {
+    auto it = peers.find(peer);
+    if (it != peers.end() && !it->second.username.empty()) return it->second.username;
+    return net::sanitizeName(readString(message, "name"));
+}
+
 // ===================== Lobby =====================
 
 void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
     if (roomOf(peer)) return sendError(peer, "You are already in a room");
+    if (!ensureLoggedIn(peer)) return;
 
     // The host picks the level. Missing field = level 1 (older clients).
     int level = 1;
@@ -181,7 +224,7 @@ void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
     room.level = level;
     room.levelName = levelName;
     Member host{peer, "p" + std::to_string(room.nextMemberNumber++),
-                net::sanitizeName(readString(message, "name")), "", net::generateReconnectToken(rng)};
+                displayNameFor(peer, message), "", net::generateReconnectToken(rng), peers[peer].playerId};
     room.hostId = host.id;
     room.members.push_back(host);
 
@@ -191,12 +234,14 @@ void RoomServer::handleCreate(ENetPeer* peer, const json& message) {
     rooms.emplace(code, std::move(room));
 
     std::cout << "Room " << code << " created by " << host.name << "\n";
-    send(peer, {{"t", net::msg::JOINED}, {"code", code}, {"you", host.id}, {"token", host.token}});
+    send(peer, {{"t", net::msg::JOINED}, {"code", code}, {"you", host.id}, {"token", host.token},
+                {"playerId", host.playerId}});
     broadcastLobby(rooms.at(code));
 }
 
 void RoomServer::handleJoin(ENetPeer* peer, const json& message) {
     if (roomOf(peer)) return sendError(peer, "You are already in a room");
+    if (!ensureLoggedIn(peer)) return;
 
     const std::string code = net::normalizeRoomCode(readString(message, "code"));
     auto it = rooms.find(code);
@@ -214,15 +259,20 @@ void RoomServer::handleJoin(ENetPeer* peer, const json& message) {
     Room& room = it->second;
     if (room.match) return sendError(peer, "That match has already started");
     if (room.members.size() >= net::MAX_PLAYERS_PER_ROOM) return sendError(peer, "That room is full");
+    const std::string accountId = peers[peer].playerId;
+    if (!accountId.empty())
+        for (const auto& m : room.members)
+            if (m.playerId == accountId) return sendError(peer, "This account is already in the room");
 
     Member member{peer, "p" + std::to_string(room.nextMemberNumber++),
-                  net::sanitizeName(readString(message, "name")), "", net::generateReconnectToken(rng)};
+                  displayNameFor(peer, message), "", net::generateReconnectToken(rng), accountId};
     room.members.push_back(member);
     peers[peer].roomCode = room.code;
     peers[peer].memberId = member.id;
 
     std::cout << member.name << " joined room " << room.code << "\n";
-    send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", member.id}, {"token", member.token}});
+    send(peer, {{"t", net::msg::JOINED}, {"code", room.code}, {"you", member.id}, {"token", member.token},
+                {"playerId", member.playerId}});
     broadcastLobby(room);
 }
 
@@ -254,6 +304,11 @@ void RoomServer::handleRejoin(ENetPeer* peer, const json& message) {
         }
         return;
     }
+
+    // A logged-in player can only take back a seat that belongs to their own account.
+    const std::string rejoiningAccount = peers[peer].playerId;
+    if (!rejoiningAccount.empty() && !memberIt->playerId.empty() && memberIt->playerId != rejoiningAccount)
+        return sendError(peer, "Could not rejoin that room");
 
     // If the old socket hasn't timed out yet, detach it silently so its later cleanup cannot touch the new peer.
     if (memberIt->peer && memberIt->peer != peer) {
@@ -453,13 +508,20 @@ std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
     }
     match->addPlayer(std::move(dm));
 
-    for (const auto& entry : level.monsters) {
-        const MonsterDefinition& monsterDef = gameData.getMonster(entry.monsterId);
-        for (int i = 0; i < entry.countPerHero * heroCount; ++i)
-            match->addMonster(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, monsterDef.boss));
+    // Swarms: they enter one after another (the next one when the battlefield is cleared).
+    // A swarm can mix different kinds of monster; counts can depend on the number of heroes.
+    for (const LevelSwarm& swarm : level.swarms) {
+        std::vector<std::unique_ptr<Monster>> swarmMonsters;
+        for (const auto& entry : swarm.monsters) {
+            const MonsterDefinition& monsterDef = gameData.getMonster(entry.monsterId);
+            for (int i = 0; i < entry.totalFor(heroCount); ++i)
+                swarmMonsters.push_back(std::make_unique<Monster>(monsterDef.name, monsterDef.maxHealth, false));
+        }
+        match->addSwarm(swarm.name, std::move(swarmMonsters));
     }
 
-    // Final boss from the level file: arrives in a later round, health scales with the number of heroes.
+    // Final boss (the Dungeon Master's own monster): bossArrivalRound 0 = after the last swarm,
+    // otherwise in that round. Health scales with the number of heroes.
     if (!level.bossId.empty()) {
         const MonsterDefinition& bossDef = gameData.getMonster(level.bossId);
         const int bossHealth = bossDef.healthPerHero > 0 ? bossDef.healthPerHero * heroCount : bossDef.maxHealth;
@@ -717,7 +779,8 @@ void RoomServer::sendError(ENetPeer* peer, const std::string& text) {
 
 void RoomServer::broadcastLobby(const Room& room) {
     json players = json::array();
-    for (const auto& m : room.members) players.push_back({{"id", m.id}, {"name", m.name}, {"role", m.role}});
+    for (const auto& m : room.members)
+        players.push_back({{"id", m.id}, {"name", m.name}, {"role", m.role}, {"playerId", m.playerId}});
     const json message = {{"t", net::msg::LOBBY}, {"code", room.code}, {"host", room.hostId}, {"players", players},
                           {"level", room.level}, {"levelName", room.levelName}};
     for (const auto& m : room.members) send(m.peer, message); // only this room's members
@@ -734,7 +797,7 @@ void RoomServer::broadcastState(Room& room) {
         std::vector<ResultPlayer> players;
         players.reserve(room.members.size());
         for (const auto& member : room.members)
-            players.push_back({member.id, member.name, member.role});
+            players.push_back({member.playerId.empty() ? member.id : member.playerId, member.name, member.role});
         try {
             resultSink(room.match->getMatchId(), *winner, players);
             room.resultSaved = true;
@@ -750,7 +813,11 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
     const Match& match = *room.match;
     json state = {{"t", net::msg::STATE}, {"code", room.code}, {"you", viewer.id}, {"host", room.hostId},
                   {"role", viewer.role == net::DM_ROLE ? "dm" : "hero"},
-                  {"round", match.getRound()}, {"phase", phaseName(match.getPhase())}};
+                  {"round", match.getRound()}, {"phase", phaseName(match.getPhase())},
+                  {"level", room.level},
+                  // Swarms: which one is fighting, how many there are, whether the DM's boss has entered
+                  {"swarm", match.getSwarmNumber()}, {"swarms", match.getSwarmCount()},
+                  {"bossArrived", match.hasBossArrived()}};
 
     const Player* active = match.getActivePlayer();
     state["active"] = active ? json(active->getPlayerId()) : json(nullptr);
@@ -775,10 +842,11 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
     json heroes = json::array();
     for (const Hero* hero : match.getHeroes()) {
         bool connected = false;
-        std::string heroId;
+        std::string heroId, accountId;
         for (const auto& m : room.members)
-            if (m.id == hero->getPlayerId()) { connected = m.peer != nullptr; heroId = m.role; }
+            if (m.id == hero->getPlayerId()) { connected = m.peer != nullptr; heroId = m.role; accountId = m.playerId; }
         heroes.push_back({{"id", hero->getPlayerId()}, {"name", hero->getName()}, {"heroId", heroId},
+                          {"playerId", accountId},
                           {"hp", hero->getHealth()}, {"maxHp", hero->getMaxHealth()},
                           {"mana", hero->getMana()}, {"maxMana", hero->getMaxMana()},
                           {"buffTurns", hero->getTimedEffects().roundsLeft(TimedEffectType::BUFF)},

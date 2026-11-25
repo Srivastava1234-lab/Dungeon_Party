@@ -26,13 +26,40 @@ void Match::addMonster(std::unique_ptr<Monster> m) {
 }
 
 void Match::configureBoss(std::unique_ptr<Monster> boss, int arrivalRound, int attackPower) {
-    if (started || pendingBoss || !boss || !boss->isBoss() ||
-        arrivalRound < 1 || arrivalRound > maxRounds || attackPower < 0) {
+    if (started || pendingBoss || swarms.hasPendingBoss() || !boss || !boss->isBoss() ||
+        arrivalRound < 0 || arrivalRound > maxRounds || attackPower < 0) {
         throw std::invalid_argument("Invalid final boss configuration");
     }
     bossAttack.emplace("Boss attack", 0, DMEffect::ATTACK, attackPower);
-    pendingBoss = std::move(boss);
-    bossArrivalRound = arrivalRound;
+    if (arrivalRound == 0) {
+        swarms.setBoss(std::move(boss)); // enters after the last swarm
+    } else {
+        pendingBoss = std::move(boss);
+        bossArrivalRound = arrivalRound;
+    }
+}
+
+void Match::addSwarm(std::string name, std::vector<std::unique_ptr<Monster>> swarmMonsters) {
+    if (started) throw std::logic_error("Configure swarms before start");
+    swarms.addSwarm(std::move(name), std::move(swarmMonsters));
+}
+
+bool Match::releaseNextGroup() {
+    if (swarms.hasNextSwarm()) {
+        SwarmManager::Swarm swarm = swarms.takeNextSwarm();
+        for (auto& monster : swarm.monsters) monsters.push_back(std::move(monster));
+        addPublicLog("Swarm " + std::to_string(swarms.swarmsReleased()) + " of " +
+                     std::to_string(swarms.swarmCount()) + " appears: " + swarm.name + ".");
+        return true;
+    }
+    if (swarms.hasPendingBoss()) {
+        std::unique_ptr<Monster> boss = swarms.takeBoss();
+        finalBoss = boss.get();
+        addPublicLog("All swarms are defeated. The Dungeon Master enters the battle as " + boss->getName() + "!");
+        monsters.push_back(std::move(boss));
+        return true;
+    }
+    return false;
 }
 
 void Match::spawnBoss() {
@@ -58,6 +85,7 @@ void Match::start() {
             dm = d;
         }
     }
+    if (monsters.empty()) releaseNextGroup(); // levels with swarms start with the first swarm
     if (heroes.empty() || heroes.size() > 6 || !dm || monsters.empty()) {
         throw std::logic_error("Need 1-6 heroes, exactly one DM and at least one monster");
     }
@@ -306,6 +334,11 @@ void Match::checkWinner() {
     }
 
     if (!livingMonster) {
+        // The battlefield is clear: the next swarm or the Dungeon Master's boss enters.
+        // The heroes only win when nothing is left to come.
+        if (started && releaseNextGroup()) {
+            return;
+        }
         winner = Side::HEROES;
         addPublicLog("The heroes win.");
     }

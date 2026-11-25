@@ -26,6 +26,7 @@
 #include <nlohmann/json.hpp>
 
 #include "../net/EnetLibrary.h"
+#include "AccountStore.h"
 #include "../net/Protocol.h"
 #include "GameData.h"
 #include "Match.h"
@@ -34,7 +35,7 @@ class RoomServer {
 public:
     // Listens on all network interfaces on 'port'. Throws std::runtime_error if the port is taken.
     struct ResultPlayer {
-        std::string id;
+        std::string id; // permanent account ID; room ID only when login is disabled
         std::string name;
         std::string role;
     };
@@ -58,6 +59,11 @@ public:
 
     std::size_t roomCount() const { return rooms.size(); }
 
+    // Player accounts. The file is created on the first registration; "" = in memory only.
+    void setAccountsFile(const std::string& path) { accounts = std::make_unique<AccountStore>(path); }
+    // Login is required by default. Only tests that check other features switch it off.
+    void setLoginRequired(bool required) { loginRequired = required; }
+
 private:
     struct Member {
         ENetPeer* peer = nullptr; // nullptr = disconnected during the match (their turns are skipped)
@@ -65,6 +71,7 @@ private:
         std::string name;
         std::string role;         // "" = not chosen yet, "dm", or a hero id from heroes.json ("warrior", "healer")
         std::string token;        // secret token allowing this player to reclaim their seat on reconnect
+        std::string playerId;     // permanent account ID ("P-K7RM2Q9X"); empty only when login is switched off
     };
 
     struct Room {
@@ -89,6 +96,9 @@ private:
         std::string roomCode; // empty = not in a room yet
         std::string memberId;
         int wrongCodes = 0;
+        std::string playerId;  // set after login/register
+        std::string username;
+        int failedLogins = 0;
     };
 
     net::EnetLibrary enetLibrary; // must be constructed before 'host' and destroyed after it
@@ -98,6 +108,8 @@ private:
     std::chrono::seconds emptyRoomGrace;
     std::mt19937 rng;
     int turnSecondsOverride = 0;
+    std::unique_ptr<AccountStore> accounts = std::make_unique<AccountStore>(); // in memory until setAccountsFile
+    bool loginRequired = true;
     std::map<std::string, Room> rooms;                 // code -> room
     std::unordered_map<ENetPeer*, PeerInfo> peers;     // every connected peer
 
@@ -107,6 +119,9 @@ private:
     void onPacket(ENetPeer* peer, const ENetPacket* packet);
 
     // Requests
+    void handleAuth(ENetPeer* peer, const nlohmann::json& message, bool registering);
+    bool ensureLoggedIn(ENetPeer* peer); // sends an error and returns false if login is needed
+    std::string displayNameFor(ENetPeer* peer, const nlohmann::json& message) const;
     void handleCreate(ENetPeer* peer, const nlohmann::json& message);
     void handleJoin(ENetPeer* peer, const nlohmann::json& message);
     void handleRejoin(ENetPeer* peer, const nlohmann::json& message);

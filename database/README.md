@@ -1,6 +1,6 @@
 # Match result database
 
-A match result has one row in `match_results` and one row in `match_players` per participant. The foreign key `match_players.match_id` links the tables. A player ID is scoped to a match, so the server can reuse IDs such as `p1` in other matches.
+A match result has one row in `match_results` and one row in `match_players` per participant. The foreign key `match_players.match_id` links the tables. For logged-in players, `player_id` is the permanent account ID (for example `P-K7RM2Q9X`), shared across their matches. Room seat IDs such as `p1` are only used when login is disabled for tests. Older saved results keep their original room IDs; these cannot be linked to accounts reliably.
 
 Store the completion time in UTC as ISO 8601 text, for example `2026-11-16T13:00:00Z`. Store the room member's display name and selected role as they were in that match. The match ID is a persistent identifier for one match.
 
@@ -16,4 +16,4 @@ sqlite3 -bail -cmd "PRAGMA foreign_keys = ON;" match-results.sqlite ".read datab
 
 Migration 001 expects version 0 and commits the schema and version 1 together.
 
-The dedicated server initializes the database at startup. It requires SQLite development files at build time. Pass an optional fourth argument, after the port, data folder and turn duration to set the database path. The default is match-results.sqlite in the server working directory.
+The dedicated server initializes the database at startup. It requires SQLite development files at build time. The fourth argument is the accounts file, as in the login server. Pass an optional fifth argument to set the results database path: `dungeon_server [port] [dataFolder] [turnSeconds] [accountsFile] [databasePath]`. The default is match-results.sqlite in the server working directory.

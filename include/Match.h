@@ -8,6 +8,7 @@
 #include "DMCard.h"
 #include "Monster.h"
 #include "Trap.h"
+#include "SwarmManager.h"
 #include <string>
 
 class Match {
@@ -27,7 +28,9 @@ class Match {
     Monster* finalBoss = nullptr;
     int bossArrivalRound = 0;
     std::optional<DMCard> bossAttack;
+    SwarmManager swarms;   // swarms and the boss that enter once the battlefield is cleared
     void spawnBoss();
+    bool releaseNextGroup(); // next swarm, or the boss after the last one; false if nothing is left
     void beginTurn(Player& player);
     void checkWinner();
     struct MonsterAction {
@@ -43,7 +46,14 @@ public:
     Match(std::string id, int maxRounds = 20);
     void addPlayer(std::unique_ptr<Player> player);
     void addMonster(std::unique_ptr<Monster> monster);
+    // arrivalRound 1..maxRounds: the boss arrives in that round (older levels).
+    // arrivalRound 0: the boss arrives after the heroes defeated every swarm.
     void configureBoss(std::unique_ptr<Monster> boss, int arrivalRound, int attackPower);
+    // Swarms enter one after another: the next one when all monsters on the field are defeated.
+    void addSwarm(std::string name, std::vector<std::unique_ptr<Monster>> monsters);
+    int getSwarmNumber() const { return swarms.swarmsReleased(); } // 1 = first swarm is fighting
+    int getSwarmCount() const { return swarms.swarmCount(); }
+    bool hasBossArrived() const { return finalBoss != nullptr; }
     void start();
     CheckResult validate(const Player& player, const Card& card, const Targetable& target) const;
     void apply(const Card& card, Targetable& target);

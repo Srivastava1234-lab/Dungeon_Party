@@ -107,6 +107,15 @@ struct MonsterDefinition {
 struct LevelMonsterEntry {
     std::string monsterId;  // id in monsters.json
     int countPerHero = 0;   // how many of this monster appear PER HERO PLAYER
+    int count = 0;          // plus this many, independent of the number of heroes
+    int totalFor(int heroCount) const { return count + countPerHero * heroCount; }
+};
+
+// One swarm (wave) of a level. Swarms enter one after another: the next one when every
+// monster on the battlefield is defeated. A swarm may mix different kinds of monster.
+struct LevelSwarm {
+    std::string name;                        // shown in the battle log, e.g. "Goblin raiders"
+    std::vector<LevelMonsterEntry> monsters;
 };
 
 struct LevelDefinition {
@@ -114,9 +123,10 @@ struct LevelDefinition {
     std::string name;                       // shown in the game
     int maxRounds = 0;                      // round limit (Kagan's Match::maxRounds)
     std::vector<std::string> defaultHeroes; // hero ids, only used until role selection exists (Sprint 2)
-    std::vector<LevelMonsterEntry> monsters;
+    std::vector<LevelSwarm> swarms;         // at least one; old files with "monsters" = one swarm
     std::string bossId;
-    int bossArrivalRound = 0;
+    int bossArrivalRound = 0;               // 0 = the boss arrives after the last swarm is defeated
+    std::string background;                 // battle background, relative to the project folder ("" = default)
     // Optional "dungeonMaster" block: the DM's mana and starting deck (DUNGEON_MASTER cards only).
     int dmMaxMana = 10;
     std::vector<DeckEntry> dmDeck;
