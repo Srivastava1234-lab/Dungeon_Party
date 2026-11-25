@@ -128,11 +128,23 @@ void printLevel(const LevelDefinition& level) {
     for (const std::string& heroId : level.defaultHeroes) {
         std::cout << " " << heroId;
     }
-    std::cout << "\n  monsters:";
-    for (const LevelMonsterEntry& line : level.monsters) {
-        std::cout << " " << line.countPerHero << "x " << line.monsterId << " per hero";
-    }
     std::cout << "\n";
+    for (std::size_t s = 0; s < level.swarms.size(); ++s) {
+        std::cout << "  swarm " << s + 1 << " \"" << level.swarms[s].name << "\":";
+        for (const LevelMonsterEntry& line : level.swarms[s].monsters) {
+            std::cout << " " << line.monsterId << " (";
+            if (line.count > 0) std::cout << line.count;
+            if (line.count > 0 && line.countPerHero > 0) std::cout << " + ";
+            if (line.countPerHero > 0) std::cout << line.countPerHero << " per hero";
+            std::cout << ")";
+        }
+        std::cout << "\n";
+    }
+    if (!level.bossId.empty()) {
+        std::cout << "  boss: " << level.bossId
+                  << (level.bossArrivalRound == 0 ? " (after the last swarm)"
+                                                  : " (round " + std::to_string(level.bossArrivalRound) + ")") << "\n";
+    }
 }
 
 // Collects a short description of every entry that still has "temporary": true.
@@ -201,15 +213,26 @@ int main(int argc, char* argv[]) {
         // Loading also checks everything. If something is wrong, a GameDataError
         // is thrown and we jump straight to the "catch" part below.
         const GameData data(dataFolder);                 // cards, heroes, monsters, rules
-        const LevelDefinition level = data.loadLevel(1); // levels/level_1.json
+
+        // Every level: level_1.json, level_2.json, ... until a number is missing.
+        std::vector<LevelDefinition> levels;
+        levels.push_back(data.loadLevel(1)); // level 1 must exist
+        for (int number = 2;; ++number) {
+            const std::filesystem::path file = std::filesystem::path(dataFolder) / "levels" /
+                                               ("level_" + std::to_string(number) + ".json");
+            if (!std::filesystem::exists(file)) break;
+            levels.push_back(data.loadLevel(number)); // a broken level file fails the check
+        }
 
         printCards(data);
         printHeroes(data);
         printMonsters(data);
         printRules(data.getRules());
-        printLevel(level);
+        for (const LevelDefinition& level : levels) printLevel(level);
 
-        const std::vector<std::string> temporary = findTemporaryEntries(data, level);
+        std::vector<std::string> temporary = findTemporaryEntries(data, levels.front());
+        for (std::size_t i = 1; i < levels.size(); ++i)
+            if (levels[i].temporary) temporary.push_back("level " + std::to_string(levels[i].number) + " \"" + levels[i].name + "\"");
         if (!temporary.empty()) {
             std::cout << "\nWARNING: " << temporary.size()
                       << " entries still use TEMPORARY values (not confirmed as final yet):\n";
@@ -219,7 +242,10 @@ int main(int argc, char* argv[]) {
         }
 
         // A missing picture is only a warning: the data itself is still valid.
-        const std::vector<std::string> missingImages = findMissingImages(data, dataFolder);
+        std::vector<std::string> missingImages = findMissingImages(data, dataFolder);
+        for (const LevelDefinition& level : levels)
+            if (!level.background.empty() && !imageExists(dataFolder, level.background))
+                missingImages.push_back(level.background + "  (background of level " + std::to_string(level.number) + ")");
         if (!missingImages.empty()) {
             std::cout << "\nWARNING: " << missingImages.size()
                       << " picture file(s) not found (paths are relative to the project folder):\n";

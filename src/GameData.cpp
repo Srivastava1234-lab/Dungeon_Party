@@ -202,6 +202,7 @@ DMEffect toDMEffect(const std::string& text, const std::string& where) {
 HeroClass toHeroClass(const std::string& text, const std::string& where) {
     if (text == "WARRIOR") return HeroClass::WARRIOR;
     if (text == "RANGER") return HeroClass::RANGER;
+    if (text == "WIZARD") return HeroClass::WIZARD;
     if (text == "CLERIC") {
         // TODO(SCRUM-5): CLERIC vs HEALER.
         // The team agreed to call this class "CLERIC" (Vision document, UML OCL constraints,
@@ -216,7 +217,7 @@ HeroClass toHeroClass(const std::string& text, const std::string& where) {
     if (text == "HEALER") {
         fail(where, "write \"CLERIC\" instead of \"HEALER\" in the data files (see data/README.md)");
     }
-    fail(where, "unknown heroClass \"" + text + "\" (allowed: WARRIOR, RANGER, CLERIC)");
+    fail(where, "unknown heroClass \"" + text + "\" (allowed: WARRIOR, RANGER, CLERIC, WIZARD)");
 }
 
 } // namespace
@@ -422,30 +423,69 @@ LevelDefinition GameData::loadLevel(int number) const {
         level.defaultHeroes.push_back(id);
     }
 
-    // monsters: a list of { "monster": "<id>", "countPerHero": <number> }
-    // countPerHero = how many of this monster appear per hero player (no fixed total).
-    const json monsterList = readList(root, "monsters", fileName);
-    for (std::size_t i = 0; i < monsterList.size(); ++i) {
-        const std::string where = fileName + ", monsters #" + std::to_string(i + 1);
-        requireObject(monsterList[i], where);
-
+    // One monster line: { "monster": "<id>", "countPerHero": <number>, "count": <number> }
+    // countPerHero = how many appear per hero player, count = a fixed number on top. At least one.
+    auto readMonsterLine = [&](const json& entry, const std::string& where) {
+        requireObject(entry, where);
         LevelMonsterEntry line;
-        line.monsterId = readText(monsterList[i], "monster", where);
-        line.countPerHero = readNumber(monsterList[i], "countPerHero", 1, where);
-        if (findMonster(line.monsterId) == nullptr) {
+        line.monsterId = readText(entry, "monster", where);
+        line.countPerHero = entry.contains("countPerHero") ? readNumber(entry, "countPerHero", 0, where) : 0;
+        line.count = entry.contains("count") ? readNumber(entry, "count", 0, where) : 0;
+        if (line.countPerHero + line.count < 1) {
+            fail(where, "needs \"countPerHero\" or \"count\" of at least 1");
+        }
+        const MonsterDefinition* monster = findMonster(line.monsterId);
+        if (monster == nullptr) {
             fail(where, "unknown monster \"" + line.monsterId + "\" (not found in monsters.json)");
         }
-        level.monsters.push_back(line);
+        if (monster->boss) {
+            fail(where, "\"" + line.monsterId + "\" is a boss; put it in \"boss\", not in a swarm");
+        }
+        return line;
+    };
+
+    // swarms: [ { "name": "<text>", "monsters": [ <monster lines> ] }, ... ]
+    // Older files have a single "monsters" list instead; that is one swarm.
+    if (root.contains("swarms")) {
+        const json swarmList = readList(root, "swarms", fileName);
+        for (std::size_t s = 0; s < swarmList.size(); ++s) {
+            const std::string where = fileName + ", swarms #" + std::to_string(s + 1);
+            requireObject(swarmList[s], where);
+            LevelSwarm swarm;
+            swarm.name = swarmList[s].contains("name") ? readText(swarmList[s], "name", where)
+                                                       : "Swarm " + std::to_string(s + 1);
+            const json lines = readList(swarmList[s], "monsters", where);
+            for (std::size_t i = 0; i < lines.size(); ++i)
+                swarm.monsters.push_back(readMonsterLine(lines[i], where + ", monsters #" + std::to_string(i + 1)));
+            level.swarms.push_back(swarm);
+        }
+    } else {
+        LevelSwarm swarm;
+        swarm.name = "Swarm 1";
+        const json monsterList = readList(root, "monsters", fileName);
+        for (std::size_t i = 0; i < monsterList.size(); ++i)
+            swarm.monsters.push_back(readMonsterLine(monsterList[i], fileName + ", monsters #" + std::to_string(i + 1)));
+        level.swarms.push_back(swarm);
     }
 
+    // boss: { "monster": "<id>" }                     -> arrives after the last swarm
+    //       { "monster": "<id>", "arrivalRound": 4 }  -> arrives in that round (older levels)
     if (root.contains("boss")) {
         const auto& boss = root.at("boss");
         requireObject(boss, fileName + ", boss");
         level.bossId = readText(boss, "monster", fileName);
-        level.bossArrivalRound = readNumber(boss, "arrivalRound", 1, fileName);
+        level.bossArrivalRound = boss.contains("arrivalRound") ? readNumber(boss, "arrivalRound", 1, fileName) : 0;
         const auto* definition = findMonster(level.bossId);
         if (!definition || !definition->boss || level.bossArrivalRound > level.maxRounds) {
             fail(fileName, "invalid boss definition or arrival round");
+        }
+    }
+
+    // background: optional battle background picture
+    if (root.contains("background")) {
+        level.background = readText(root, "background", fileName);
+        if (level.background.find('\\') != std::string::npos) {
+            fail(fileName, "\"background\" must use / instead of \\");
         }
     }
 

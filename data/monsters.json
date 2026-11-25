@@ -7,9 +7,9 @@
       "maxHealth": 100,
       "attackPower": 15,
       "boss": false,
-      "image": "assets/Monster_Artwork.png",
+      "image": "assets/Goblin_Artwork.png",
       "temporary": true,
-      "_note": "maxHealth 100 and attackPower 15 come from the Sprint 1 requirements (team chat, 23.10.2026). The image is the monster artwork in assets/."
+      "_note": "maxHealth 100 and attackPower 15 come from the Sprint 1 requirements (team chat, 23.10.2026). Image: the coloured goblin artwork."
     },
     {
       "id": "final_boss",
@@ -19,6 +19,36 @@
       "boss": true,
       "image": "assets/Final_Boss_Artwork.png",
       "temporary": true
+    },
+    {
+      "id": "skeleton",
+      "name": "Skeleton",
+      "maxHealth": 70,
+      "attackPower": 12,
+      "boss": false,
+      "image": "assets/skeleton_Artwork_Final.png",
+      "temporary": true,
+      "_note": "Placeholder values (Sprint 3: swarms and levels). Confirm with Irma."
+    },
+    {
+      "id": "lich",
+      "name": "Lich",
+      "maxHealth": 120,
+      "attackPower": 18,
+      "boss": false,
+      "image": "assets/Lich_Artwork_Final.png",
+      "temporary": true,
+      "_note": "Placeholder values (Sprint 3: swarms and levels). Confirm with Irma."
+    },
+    {
+      "id": "dragon",
+      "name": "Red Dragon",
+      "healthPerHero": 120,
+      "attackPower": 25,
+      "boss": true,
+      "image": "assets/Dragon_Artwork_Final.png",
+      "temporary": true,
+      "_note": "Placeholder values (Sprint 3: swarms and levels). Confirm with Irma. Boss of level 2: the form the Dungeon Master takes after the swarms."
     }
   ]
 }

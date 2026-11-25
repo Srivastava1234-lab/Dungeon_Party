@@ -99,6 +99,7 @@ add_library(game_logic STATIC
         src/Healer.cpp
         src/Wizard.cpp
         src/TimedEffects.cpp
+        src/SwarmManager.cpp
 )
 target_include_directories(game_logic PUBLIC include)
 target_link_libraries(game_logic PUBLIC nlohmann_json::nlohmann_json)
@@ -109,7 +110,7 @@ target_include_directories(net_client PUBLIC net)
 target_link_libraries(net_client PUBLIC enet nlohmann_json::nlohmann_json)
 
 # Room logic as a library (embedded directly into the game for Listen Server hosting!)
-add_library(room_server STATIC server/RoomServer.cpp)
+add_library(room_server STATIC server/RoomServer.cpp server/AccountStore.cpp server/PasswordHasher.cpp)
 target_include_directories(room_server PUBLIC server)
 target_link_libraries(room_server PUBLIC enet nlohmann_json::nlohmann_json game_logic game_data)
 
@@ -173,3 +174,13 @@ endforeach()
 add_executable(net_tests tests/net_tests.cpp)
 target_link_libraries(net_tests PRIVATE room_server net_client)
 add_test(NAME network COMMAND net_tests)
+
+# Swarms and the Dungeon Master's boss (levels with "swarms")
+add_executable(swarm_tests tests/swarm_tests.cpp)
+target_link_libraries(swarm_tests PRIVATE game_logic)
+add_test(NAME swarms COMMAND swarm_tests)
+
+# Player accounts: password hashing and the accounts file
+add_executable(account_tests tests/account_tests.cpp)
+target_link_libraries(account_tests PRIVATE room_server)
+add_test(NAME accounts COMMAND account_tests)
