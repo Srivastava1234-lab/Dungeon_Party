@@ -36,6 +36,7 @@
 #include "Protocol.h"
 #include "Renderer.h"
 #include "RoomServer.h"
+#include "MatchResultStore.h"
 
 using nlohmann::json;
 
@@ -761,8 +762,12 @@ int main() {
                     } else {
                         if (!localServer && gameData) {
                             try {
-                                localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(std::clamp(port, 1, 65535)));
-                                localServer->setAccountsFile(projectPath("accounts.json")); // ignored by git
+                                auto server = std::make_unique<RoomServer>(
+                                    *gameData, static_cast<std::uint16_t>(std::clamp(port, 1, 65535)), 0,
+                                    std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS),
+                                    makeMatchResultSink(projectPath("match-results.sqlite")));
+                                server->setAccountsFile(projectPath("accounts.json")); // ignored by git
+                                localServer = std::move(server);
                             } catch (const std::exception& e) {
                                 // Port already taken (e.g. another window on this computer is hosting):
                                 // we can still create a room on that server.

@@ -51,12 +51,9 @@ int main(int argc, char** argv) {
 
     try {
         GameData gameData(dataDir);
-        MatchResultStore results(databasePath);
         RoomServer server(gameData, port, turnSeconds,
                           std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS),
-                          [&results](const auto& matchId, Side winner, const auto& players) {
-                              results.save(matchId, winner, players);
-                          });
+                          makeMatchResultSink(databasePath));
         server.setAccountsFile(accountsFile);
         std::cout << "Player accounts: " << accountsFile << "\n";
         std::cout << "Match results: " << databasePath << "\n";

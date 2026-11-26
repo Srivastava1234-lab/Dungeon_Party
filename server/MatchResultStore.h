@@ -27,3 +27,6 @@ public:
 private:
     sqlite3* db = nullptr;
 };
+
+// The callback owns the database connection for as long as the server uses it.
+RoomServer::ResultSink makeMatchResultSink(const std::string& path);

@@ -25,3 +25,9 @@ build-clang/
 # Player accounts (hashed passwords) - never commit
 accounts.json
 accounts.json.tmp
+
+# Local completed-match history and SQLite sidecar files
+/match-results.sqlite
+/match-results.sqlite-journal
+/match-results.sqlite-wal
+/match-results.sqlite-shm

@@ -106,3 +106,11 @@ std::optional<MatchResultStore::Result> MatchResultStore::load(const std::string
     require(db, status, SQLITE_DONE);
     return result;
 }
+
+RoomServer::ResultSink makeMatchResultSink(const std::string& path) {
+    auto store = std::make_shared<MatchResultStore>(path);
+    return [store](const std::string& matchId, Side winner,
+                   const std::vector<RoomServer::ResultPlayer>& players) {
+        store->save(matchId, winner, players);
+    };
+}

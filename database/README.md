@@ -17,3 +17,16 @@ sqlite3 -bail -cmd "PRAGMA foreign_keys = ON;" match-results.sqlite ".read datab
 Migration 001 expects version 0 and commits the schema and version 1 together.
 
 The dedicated server initializes the database at startup. It requires SQLite development files at build time. The fourth argument is the accounts file, as in the login server. Pass an optional fifth argument to set the results database path: `dungeon_server [port] [dataFolder] [turnSeconds] [accountsFile] [databasePath]`. The default is match-results.sqlite in the server working directory.
+
+
+## Hosting from the game
+
+Hosting on this computer saves completed matches too. The embedded server uses
+the same `makeMatchResultSink` as the dedicated server, with `match-results.sqlite`
+in the project directory, next to `accounts.json`. The callback owns the database
+connection until the server is destroyed. Both hosting modes use permanent
+account IDs and the same versioned schema. Runtime results files are ignored by Git.
+
+The network test finishes authenticated matches on all three levels through DM
+attacks, then destroys the server and reopens the SQLite file to verify the saved
+results remain available.

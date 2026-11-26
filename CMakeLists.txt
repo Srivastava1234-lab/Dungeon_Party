@@ -114,6 +114,16 @@ add_library(room_server STATIC server/RoomServer.cpp server/AccountStore.cpp ser
 target_include_directories(room_server PUBLIC server)
 target_link_libraries(room_server PUBLIC enet nlohmann_json::nlohmann_json game_logic game_data)
 
+find_package(SQLite3 REQUIRED)
+set(match_results_migration "${CMAKE_CURRENT_SOURCE_DIR}/database/migrations/001_match_results.sql")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${match_results_migration}")
+file(READ "${match_results_migration}" match_results_sql)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/MatchResultsMigration.h"
+        "inline constexpr char matchResultsMigration[] = R\"SQL(${match_results_sql})SQL\";\n")
+add_library(match_result_store STATIC server/MatchResultStore.cpp)
+target_include_directories(match_result_store PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(match_result_store PUBLIC room_server PRIVATE SQLite::SQLite3)
+
 set(DUNGEON_PARTY_DEFAULT_SERVER "" CACHE STRING "Optional default server host[:port] pre-filled in the client")
 
 # Main Unified Game Executable (Local + Listen Server Host + Online Join)
@@ -125,7 +135,7 @@ add_executable(${PROJECT_NAME}
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
         net_client
-        room_server
+        match_result_store
         game_data
         game_logic
         glfw
@@ -160,19 +170,10 @@ foreach(case_name attack_damage invalid_targets monster_damage victory round_lim
 endforeach()
 
 add_executable(dungeon_server server/server_main.cpp)
-find_package(SQLite3 REQUIRED)
-set(match_results_migration "${CMAKE_CURRENT_SOURCE_DIR}/database/migrations/001_match_results.sql")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${match_results_migration}")
-file(READ "${match_results_migration}" match_results_sql)
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/MatchResultsMigration.h"
-        "inline constexpr char matchResultsMigration[] = R\"SQL(${match_results_sql})SQL\";\n")
-target_sources(dungeon_server PRIVATE server/MatchResultStore.cpp)
-target_include_directories(dungeon_server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(dungeon_server PRIVATE room_server SQLite::SQLite3)
+target_link_libraries(dungeon_server PRIVATE match_result_store)
 
-add_executable(match_result_tests tests/match_result_tests.cpp server/MatchResultStore.cpp)
-target_include_directories(match_result_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(match_result_tests PRIVATE room_server SQLite::SQLite3)
+add_executable(match_result_tests tests/match_result_tests.cpp)
+target_link_libraries(match_result_tests PRIVATE match_result_store)
 add_test(NAME match_results_by_id COMMAND match_result_tests)
 
 # SCRUM-46 (partial): current DM attack cards and queued monster actions.
@@ -185,9 +186,7 @@ foreach(case_name deferred_damage order mana turn_authority invalid_targets inva
 endforeach()
 
 add_executable(net_tests tests/net_tests.cpp)
-target_sources(net_tests PRIVATE server/MatchResultStore.cpp)
-target_include_directories(net_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(net_tests PRIVATE room_server net_client SQLite::SQLite3)
+target_link_libraries(net_tests PRIVATE match_result_store net_client)
 add_test(NAME network COMMAND net_tests)
 
 # SCRUM-59: existing card interaction checks, including Release builds.

@@ -3,6 +3,8 @@
 
 #include <chrono>
 #include <functional>
+#include <filesystem>
+#include <random>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -53,6 +55,21 @@ void check(bool condition, const std::string& what) {
     if (!condition) throw std::runtime_error("FAILED: " + what);
     std::cout << "  ok  " << what << "\n";
 }
+
+// Each run owns its temporary directory; production accounts/results are untouched.
+struct ResultFiles {
+    std::filesystem::path folder = std::filesystem::temp_directory_path() /
+        ("dungeon-host-results-" + std::to_string(std::random_device{}()));
+    std::filesystem::path database = folder / "results.sqlite";
+    ResultFiles() {
+        check(std::filesystem::create_directory(folder), "created isolated hosted-results directory");
+    }
+    ~ResultFiles() {
+        std::error_code ignored;
+        std::filesystem::remove(database, ignored);
+        std::filesystem::remove(folder, ignored);
+    }
+};
 
 } // namespace
 
@@ -589,109 +606,122 @@ int main() {
 
         // Completed matches use permanent account IDs, independent of room seats and hero roles.
         {
-            RoomServer resultServer(data, TEST_PORT + 4, 0, std::chrono::seconds(10),
-                                    [&](const auto& id, Side winner, const auto& players) {
-                                        results.save(id, winner, players);
-                                        savedMatchIds.push_back(id);
-                                    });
-            std::string heroAccountId, dmAccountId, previousMatchId;
-            for (const int level : {1, 2, 3}) {
-                TestClient finisher, opponent;
-                std::vector<TestClient*> clients{&finisher, &opponent};
-                for (auto* client : clients) client->net.connect("127.0.0.1", TEST_PORT + 4);
-                pump(resultServer, clients, [&] {
-                    for (auto* client : clients)
-                        if (client->net.status() != NetClient::Status::Connected) return false;
-                    return true;
-                });
-                const auto authType = level == 1 ? net::msg::REGISTER : net::msg::LOGIN;
-                finisher.net.send({{"t", authType}, {"username", "SavedHero"}, {"password", "result-test-123"}});
-                opponent.net.send({{"t", authType}, {"username", "SavedDM"}, {"password", "result-test-456"}});
-                pump(resultServer, clients, [&] {
-                    return !finisher.lastOfType(net::msg::AUTH).is_null() &&
-                           !opponent.lastOfType(net::msg::AUTH).is_null();
-                });
-                const std::string heroId = finisher.lastOfType(net::msg::AUTH)["playerId"];
-                const std::string dmId = opponent.lastOfType(net::msg::AUTH)["playerId"];
-                check(heroId.rfind("P-", 0) == 0 && dmId.rfind("P-", 0) == 0 && heroId != dmId,
-                      "results participants have distinct permanent account IDs");
-                if (level == 1) { heroAccountId = heroId; dmAccountId = dmId; }
-                else check(heroId == heroAccountId && dmId == dmAccountId,
-                           "logging in for another match preserves both player IDs");
+            ResultFiles files;
+            const auto beforeHosting = savedMatchIds.size();
+            {
+                MatchResultStore hostedResults(files.database.string());
+                auto persist = makeMatchResultSink(files.database.string());
+                RoomServer resultServer(data, TEST_PORT + 4, 0, std::chrono::seconds(10),
+                                        [persist, &savedMatchIds](const auto& id, Side winner, const auto& players) {
+                                            persist(id, winner, players);
+                                            savedMatchIds.push_back(id);
+                                        });
+                std::string heroAccountId, dmAccountId, previousMatchId;
+                for (const int level : {1, 2, 3}) {
+                    TestClient finisher, opponent;
+                    std::vector<TestClient*> clients{&finisher, &opponent};
+                    for (auto* client : clients) client->net.connect("127.0.0.1", TEST_PORT + 4);
+                    pump(resultServer, clients, [&] {
+                        for (auto* client : clients)
+                            if (client->net.status() != NetClient::Status::Connected) return false;
+                        return true;
+                    });
+                    const auto authType = level == 1 ? net::msg::REGISTER : net::msg::LOGIN;
+                    finisher.net.send({{"t", authType}, {"username", "SavedHero"}, {"password", "result-test-123"}});
+                    opponent.net.send({{"t", authType}, {"username", "SavedDM"}, {"password", "result-test-456"}});
+                    pump(resultServer, clients, [&] {
+                        return !finisher.lastOfType(net::msg::AUTH).is_null() &&
+                               !opponent.lastOfType(net::msg::AUTH).is_null();
+                    });
+                    const std::string heroId = finisher.lastOfType(net::msg::AUTH)["playerId"];
+                    const std::string dmId = opponent.lastOfType(net::msg::AUTH)["playerId"];
+                    check(heroId.rfind("P-", 0) == 0 && dmId.rfind("P-", 0) == 0 && heroId != dmId,
+                          "results participants have distinct permanent account IDs");
+                    if (level == 1) { heroAccountId = heroId; dmAccountId = dmId; }
+                    else check(heroId == heroAccountId && dmId == dmAccountId,
+                               "logging in for another match preserves both player IDs");
 
-                const auto before = savedMatchIds.size();
-                finisher.net.send({{"t", net::msg::CREATE}, {"name", "Forged name"}, {"level", level}});
-                pump(resultServer, clients, [&] { return !finisher.lastOfType(net::msg::LOBBY).is_null(); });
-                check(finisher.lastOfType(net::msg::LOBBY)["level"] == level,
-                      "results-enabled server preserves the selected level");
-                const std::string roomCode = finisher.lastOfType(net::msg::JOINED)["code"];
-                const std::string seatId = finisher.lastOfType(net::msg::JOINED)["you"];
-                check(heroId != seatId, "permanent ID is separate from the room's turn-order ID");
-                opponent.net.send({{"t", net::msg::JOIN}, {"code", roomCode}});
-                pump(resultServer, clients, [&] { return !opponent.lastOfType(net::msg::JOINED).is_null(); });
-                const std::string role = level == 1 ? "warrior" : "wizard";
-                finisher.net.send({{"t", net::msg::ROLE}, {"role", role}});
-                opponent.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
-                pump(resultServer, clients, [&] {
-                    auto lobby = finisher.lastOfType(net::msg::LOBBY);
-                    return lobby["players"].size() == 2 && lobby["players"][0]["role"] == role &&
-                           lobby["players"][1]["role"] == "dm";
-                });
-                finisher.received.clear();
-                finisher.net.send({{"t", net::msg::START}});
-                pump(resultServer, clients, [&] { return !finisher.lastOfType(net::msg::STATE).is_null(); });
-                check(savedMatchIds.size() == before, "an unfinished match is not saved");
-                const auto definition = data.loadLevel(level);
-                const int turnLimit = definition.maxRounds * 2;
-                for (int turn = 0; turn < turnLimit && finisher.lastOfType(net::msg::STATE)["winner"].is_null(); ++turn) {
-                    auto* active = finisher.lastOfType(net::msg::STATE)["active"] == seatId ? &finisher : &opponent;
+                    const auto before = savedMatchIds.size();
+                    finisher.net.send({{"t", net::msg::CREATE}, {"name", "Forged name"}, {"level", level}});
+                    pump(resultServer, clients, [&] { return !finisher.lastOfType(net::msg::LOBBY).is_null(); });
+                    check(finisher.lastOfType(net::msg::LOBBY)["level"] == level,
+                          "results-enabled server preserves the selected level");
+                    const std::string roomCode = finisher.lastOfType(net::msg::JOINED)["code"];
+                    const std::string seatId = finisher.lastOfType(net::msg::JOINED)["you"];
+                    check(heroId != seatId, "permanent ID is separate from the room's turn-order ID");
+                    opponent.net.send({{"t", net::msg::JOIN}, {"code", roomCode}});
+                    pump(resultServer, clients, [&] { return !opponent.lastOfType(net::msg::JOINED).is_null(); });
+                    const std::string role = level == 1 ? "warrior" : "wizard";
+                    finisher.net.send({{"t", net::msg::ROLE}, {"role", role}});
+                    opponent.net.send({{"t", net::msg::ROLE}, {"role", "dm"}});
+                    pump(resultServer, clients, [&] {
+                        auto lobby = finisher.lastOfType(net::msg::LOBBY);
+                        return lobby["players"].size() == 2 && lobby["players"][0]["role"] == role &&
+                               lobby["players"][1]["role"] == "dm";
+                    });
                     finisher.received.clear();
-                    opponent.received.clear();
-                    if (active == &opponent) {
-                        opponent.net.send({{"t", net::msg::COMMAND}, {"card", 0}, {"monster", 0}, {"hero", 0}});
-                        pump(resultServer, clients, [&] {
-                            return !opponent.lastOfType(net::msg::STATE).is_null() ||
-                                   !opponent.lastOfType(net::msg::ERROR).is_null();
-                        });
-                        check(opponent.lastOfType(net::msg::ERROR).is_null(),
-                              "the DM can attack to finish the match without relying on a round limit");
+                    finisher.net.send({{"t", net::msg::START}});
+                    pump(resultServer, clients, [&] { return !finisher.lastOfType(net::msg::STATE).is_null(); });
+                    check(savedMatchIds.size() == before, "an unfinished match is not saved");
+                    const auto definition = data.loadLevel(level);
+                    const int turnLimit = definition.maxRounds * 2;
+                    for (int turn = 0; turn < turnLimit && finisher.lastOfType(net::msg::STATE)["winner"].is_null(); ++turn) {
+                        auto* active = finisher.lastOfType(net::msg::STATE)["active"] == seatId ? &finisher : &opponent;
                         finisher.received.clear();
                         opponent.received.clear();
+                        if (active == &opponent) {
+                            opponent.net.send({{"t", net::msg::COMMAND}, {"card", 0}, {"monster", 0}, {"hero", 0}});
+                            pump(resultServer, clients, [&] {
+                                return !opponent.lastOfType(net::msg::STATE).is_null() ||
+                                       !opponent.lastOfType(net::msg::ERROR).is_null();
+                            });
+                            check(opponent.lastOfType(net::msg::ERROR).is_null(),
+                                  "the DM can attack to finish the match without relying on a round limit");
+                            finisher.received.clear();
+                            opponent.received.clear();
+                        }
+                        active->net.send({{"t", net::msg::END}});
+                        pump(resultServer, clients, [&] {
+                            return !finisher.lastOfType(net::msg::STATE).is_null() ||
+                                   !active->lastOfType(net::msg::ERROR).is_null();
+                        });
+                        check(active->lastOfType(net::msg::ERROR).is_null(), "authenticated match progresses normally");
+                        const auto state = finisher.lastOfType(net::msg::STATE);
+                        check(state["bossArrived"] == false,
+                              "boss arrival waits for the living monster group on every level");
                     }
-                    active->net.send({{"t", net::msg::END}});
-                    pump(resultServer, clients, [&] {
-                        return !finisher.lastOfType(net::msg::STATE).is_null() ||
-                               !active->lastOfType(net::msg::ERROR).is_null();
-                    });
-                    check(active->lastOfType(net::msg::ERROR).is_null(), "authenticated match progresses normally");
-                    const auto state = finisher.lastOfType(net::msg::STATE);
-                    check(state["bossArrived"] == false,
-                          "boss arrival waits for the living monster group on every level");
+                    check(!finisher.lastOfType(net::msg::STATE)["winner"].is_null(), "network match finishes");
+                    check(savedMatchIds.size() == before + 1, "finished network match is saved once");
+                    const std::string id = savedMatchIds.back();
+                    check(id.size() == 32 && id != roomCode && id != previousMatchId,
+                          "each completed match gets a unique ID, independent of its room code");
+                    const auto saved = hostedResults.load(id);
+                    check(saved && saved->winner == Side::DUNGEON_MASTER && saved->players.size() == 2 &&
+                              !saved->finishedAtUtc.empty(), "completed match loads with winner, timestamp and both accounts");
+                    bool foundHero = false, foundDM = false;
+                    for (const auto& player : saved->players) {
+                        foundHero = foundHero || (player.id == heroId && player.name == "SavedHero" && player.role == role);
+                        foundDM = foundDM || (player.id == dmId && player.name == "SavedDM" && player.role == "dm");
+                    }
+                    check(foundHero && foundDM, "results store permanent account IDs, account names and selected roles");
+                    if (!previousMatchId.empty()) {
+                        const auto previous = hostedResults.load(previousMatchId);
+                        check(previous && previous->players.size() == 2,
+                              "the previous match still loads independently for the same accounts");
+                        for (const auto& player : previous->players)
+                            if (player.id == heroId) check(player.role == (level == 2 ? "warrior" : "wizard"), "old results retain the hero role from that match");
+                    }
+                    previousMatchId = id;
+                    for (auto* client : clients) client->net.disconnect();
+                    pump(resultServer, clients, [&] { return resultServer.roomCount() == 0; }, 12000);
                 }
-                check(!finisher.lastOfType(net::msg::STATE)["winner"].is_null(), "network match finishes");
-                check(savedMatchIds.size() == before + 1, "finished network match is saved once");
-                const std::string id = savedMatchIds.back();
-                check(id.size() == 32 && id != roomCode && id != previousMatchId,
-                      "each completed match gets a unique ID, independent of its room code");
-                const auto saved = results.load(id);
-                check(saved && saved->winner == Side::DUNGEON_MASTER && saved->players.size() == 2 &&
-                          !saved->finishedAtUtc.empty(), "completed match loads with winner, timestamp and both accounts");
-                bool foundHero = false, foundDM = false;
-                for (const auto& player : saved->players) {
-                    foundHero = foundHero || (player.id == heroId && player.name == "SavedHero" && player.role == role);
-                    foundDM = foundDM || (player.id == dmId && player.name == "SavedDM" && player.role == "dm");
-                }
-                check(foundHero && foundDM, "results store permanent account IDs, account names and selected roles");
-                if (!previousMatchId.empty()) {
-                    const auto previous = results.load(previousMatchId);
-                    check(previous && previous->players.size() == 2,
-                          "the previous match still loads independently for the same accounts");
-                    for (const auto& player : previous->players)
-                        if (player.id == heroId) check(player.role == (level == 2 ? "warrior" : "wizard"), "old results retain the hero role from that match");
-                }
-                previousMatchId = id;
-                for (auto* client : clients) client->net.disconnect();
-                pump(resultServer, clients, [&] { return resultServer.roomCount() == 0; }, 12000);
+            }
+            MatchResultStore reopened(files.database.string());
+            check(savedMatchIds.size() == beforeHosting + 3, "the hosted server completed all three level matches");
+            for (auto i = beforeHosting; i < savedMatchIds.size(); ++i) {
+                const auto saved = reopened.load(savedMatchIds[i]);
+                check(saved && saved->players.size() == 2 && saved->winner == Side::DUNGEON_MASTER,
+                      "hosted results survive destroying the server and reopening its database");
             }
         }
 
