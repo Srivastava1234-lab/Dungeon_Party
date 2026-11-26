@@ -10,6 +10,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#include <functional>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -147,6 +148,24 @@ void drawNotice(const std::string& notice) {
     if (!notice.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
 }
 
+// Wood-and-gold look shared by the menu screens (Start, Lobby).
+void pushMenuStyle() {
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.13f, 0.08f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.33f, 0.21f, 0.11f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.85f, 0.65f, 0.30f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 0.92f, 0.75f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.07f, 0.05f, 0.85f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2.0f);
+}
+
+void popMenuStyle() {
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(6);
+}
 // Pop up windows: help in lobby, and about us in start. 
 void drawHelpPopup() {
     ImGui::SetNextWindowSize(ImVec2(580, 0));
@@ -170,6 +189,27 @@ void drawHelpPopup() {
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+}
+void drawAccountPopup (char* name, std::size_t nameSize, char* pass, std::size_t passSize,
+                      bool& newAccount, const std::function<void()>& pendingConnect, std::string& loginError){
+    if (ImGui::BeginPopupModal("Account", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        pushMenuStyle();
+        ImGui::InputTextWithHint("##name", "Username", name, nameSize);
+        ImGui::InputTextWithHint("##password", "Password", pass, passSize, ImGuiInputTextFlags_Password);
+        ImGui::TextDisabled("Don't reuse a real password: traffic is not encrypted.");
+        if (!loginError.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", loginError.c_str());
+        const bool filled = name[0] != '\0' && pass[0] != '\0';
+        ImGui::BeginDisabled(!filled);
+        if (ImGui::Button("Log in"))  { loginError.clear(); newAccount = false; ImGui::CloseCurrentPopup(); if (pendingConnect) pendingConnect(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Sign up")) { loginError.clear(); newAccount = true;  ImGui::CloseCurrentPopup(); if (pendingConnect) pendingConnect(); }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {loginError.clear(); ImGui::CloseCurrentPopup();}
+        popMenuStyle();
+        ImGui::EndPopup();
+    }
+ 
 }
 void drawAboutPopup() {
     ImGui::SetNextWindowSize(ImVec2(600, 0));
@@ -198,24 +238,7 @@ void drawAboutPopup() {
         ImGui::EndPopup();
     }
 }
-// Wood-and-gold look shared by the menu screens (Start, Lobby).
-void pushMenuStyle() {
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.13f, 0.08f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.33f, 0.21f, 0.11f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.45f, 0.29f, 0.14f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.85f, 0.65f, 0.30f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 0.92f, 0.75f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.07f, 0.05f, 0.85f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2.0f);
-}
 
-void popMenuStyle() {
-    ImGui::PopStyleVar(4);
-    ImGui::PopStyleColor(6);
-}
 // Width and height of a texture that is already on the GPU, in pixels.
 ImVec2 textureSize(GLuint texture) {
     GLint width = 0, height = 0;
@@ -407,6 +430,10 @@ int main() {
         return json{{"t", newAccount ? net::msg::REGISTER : net::msg::LOGIN},
                     {"username", nameBuf}, {"password", passBuf}};
     };
+    bool openLoginPopup = false;           // set by New Adventure / Join
+    std::string loginError;
+    std::string loggedInServer;            // "address:port" where the login was accepted, "" = none
+    std::function<void()> pendingConnect;  // the host/join action, run after Log in / Sign up
     if (!savedSession.playerName.empty()) {
         std::snprintf(nameBuf, sizeof(nameBuf), "%s", savedSession.playerName.c_str());
     }
@@ -501,6 +528,14 @@ int main() {
         screen = OnlineScreen::Connecting;
     };
 
+    // Same address rules as startConnecting, so "localhost", "127.0.0.1" and "my-ip" count as one server.
+    auto serverKey = [&](const std::string& rawAddress) {
+        const auto fallbackPort = static_cast<std::uint16_t>(std::clamp(port, 1, 65535));
+        const net::ServerEndpoint endpoint = net::parseServerEndpoint(rawAddress, fallbackPort);
+        const std::string host = isThisComputer(endpoint.host) ? "127.0.0.1" : endpoint.host;
+        return host + ":" + std::to_string(endpoint.port);
+    };
+
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
@@ -547,6 +582,7 @@ int main() {
             const std::string type = strOr(message, "t");
             if (type == net::msg::AUTH) {
                 loggedIn = true;
+                loggedInServer = activeSession.address + ":" + std::to_string(activeSession.port);
                 myPlayerId = strOr(message, "playerId");
                 std::snprintf(nameBuf, sizeof(nameBuf), "%s", strOr(message, "username", nameBuf).c_str());
                 newAccount = false; // the account exists now; reconnects log in normally
@@ -597,7 +633,14 @@ int main() {
                     backToMenu(notice, false);
                 } else if (screen == OnlineScreen::Connecting) {
                     closedByServer = true;
+                    const bool loginFailed = !loggedIn; // create/join is only sent after a successful login
                     backToMenu(notice, false);
+                    if (loginFailed) {
+                        loginError = notice;   // show it in the popup instead of on the menu
+                        loggedInServer.clear();
+                        notice.clear();
+                        openLoginPopup = true;
+                    }
                 }
             } else if (type == net::msg::CLOSED) {
                 closedByServer = true;
@@ -694,30 +737,15 @@ int main() {
                 if (helpClicked) ImGui::OpenPopup("How to play");
                 drawHelpPopup();
 
-                // Login fields, centred above the two scrolls. The account lives on the server you
-                // host on or join; the first time there, tick "Create a new account".
-                ImGui::PushStyleColor(ImGuiCol_FrameBg,   ImVec4(0.93f, 0.85f, 0.65f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text,      ImVec4(0.25f, 0.15f, 0.05f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.45f, 0.25f, 0.05f, 1.0f));
-                ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.14f));
-                ImGui::SetNextItemWidth(win.x * 0.3f);
-                ImGui::InputTextWithHint("##name", "Username", nameBuf, sizeof(nameBuf));
-                ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.19f));
-                ImGui::SetNextItemWidth(win.x * 0.3f);
-                ImGui::InputTextWithHint("##password", "Password", passBuf, sizeof(passBuf), ImGuiInputTextFlags_Password);
-                ImGui::PopStyleColor(2);
-                ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.235f));
-                ImGui::Checkbox("Create a new account", &newAccount);
-                ImGui::PopStyleColor();
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.7f, 0.85f), "(don't reuse a real password: traffic is not encrypted)");
-                // Host and Join only work once username and password are filled in
-                const bool nameFilled = nameBuf[0] != '\0' && passBuf[0] != '\0';
+                // Account popup: log in or sign up before hosting or joining
+
+                if (openLoginPopup) { ImGui::OpenPopup("Account"); openLoginPopup = false; }
+                drawAccountPopup(nameBuf, sizeof(nameBuf), passBuf, sizeof(passBuf), newAccount, pendingConnect, loginError);
 
                 if (!notice.empty()) {
-                    ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.28f));
-                    ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
-                }
+                ImGui::SetCursorPos(ImVec2(win.x * 0.35f, win.y * 0.28f));
+                ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", notice.c_str());
+}
 
                 // The two panels sit inside the empty parchment scrolls of Menu_Background_AI_Generated.png
                 const float panelW = win.x * 0.235f;
@@ -752,14 +780,19 @@ int main() {
                         ImGui::EndCombo();
                     }
                 }
-                ImGui::BeginDisabled(!nameFilled);
+                
+
+                                
                 if (ImGui::Button("New Adventure", ImVec2(-1, 44))) {
                     const int chosenLevel = levelChoices.empty() ? 1 : levelChoices[levelIndex].first;
-                    const json create = {{"t", net::msg::CREATE}, {"name", nameBuf}, {"level", chosenLevel}};
-                    if (hostWhere == 1 && !isThisComputer(net::trimWhitespace(hostServerBuf))) {
-                        startConnecting(hostServerBuf, create); // a dedicated dungeon_server somewhere else
-                    } else {
-                        if (!localServer && gameData) {
+                    const bool onServer = hostWhere == 1 && !isThisComputer(net::trimWhitespace(hostServerBuf));
+                    const std::string serverAddress = hostServerBuf;
+                    pendingConnect = [&, chosenLevel, onServer, serverAddress]() {
+                        const json create = {{"t", net::msg::CREATE}, {"name", nameBuf}, {"level", chosenLevel}};
+                        if (onServer) {
+                            startConnecting(serverAddress, create); // a dedicated dungeon_server somewhere else
+                        } else {
+                            if (!localServer && gameData) {
                             try {
                                 localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(std::clamp(port, 1, 65535)));
                                 localServer->setAccountsFile(projectPath("accounts.json")); // ignored by git
@@ -769,10 +802,17 @@ int main() {
                                 std::cerr << "Local server note: " << e.what() << "\n";
                             }
                         }
-                        startConnecting("127.0.0.1", create);
+                            startConnecting("127.0.0.1", create);
+                        }
+                    };
+                    const std::string target = onServer ? serverAddress : "127.0.0.1";
+                    if (!loggedInServer.empty() && serverKey(target) == loggedInServer) {
+                        pendingConnect();          // same server: log in again automatically
+                    } else {
+                        openLoginPopup = true;     // first time or another server: ask
                     }
                 }
-                ImGui::EndDisabled();
+              
                 ImGui::EndChild();
 
                 // ---- Right scroll: Join
@@ -786,11 +826,20 @@ int main() {
                 ImGui::InputInt("##port", &port);
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextWithHint("##code", "Room code", codeBuf, sizeof(codeBuf), ImGuiInputTextFlags_CharsUppercase);
-                ImGui::BeginDisabled(!nameFilled);
-                if (ImGui::Button("Join", ImVec2(-1, 44))) {
-                    startConnecting(serverBuf, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", codeBuf}});
+                
+                    if (ImGui::Button("Join", ImVec2(-1, 44))) {
+                        const std::string serverAddress = serverBuf;
+                        const std::string code = codeBuf;
+                        pendingConnect = [&, serverAddress, code]() {
+                            startConnecting(serverAddress, {{"t", net::msg::JOIN}, {"name", nameBuf}, {"code", code}});
+                    };
+                    if (!loggedInServer.empty() && serverKey(serverAddress) == loggedInServer) {
+                        pendingConnect();          // same server: log in again automatically
+                    } else {
+                        openLoginPopup = true;     // first time or another server: ask
+                    }
                 }
-                ImGui::EndDisabled();
+               
                 if (savedSession.valid()) {
                     ImGui::Spacing();
                     if (ImGui::Button(("Reconnect to " + savedSession.roomCode).c_str(), ImVec2(-1, 36))) {
