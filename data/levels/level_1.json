@@ -1,35 +1,11 @@
 {
-  "_note": "Two swarms, then the Dungeon Master enters as the Final Boss.",
+  "_note": "Monster composition and values follow the supplied draft. Per Akshat's newer clarification, the boss enters after the monster group is defeated.",
   "number": 1,
   "name": "Level 1: The Old Dungeon",
   "maxRounds": 12,
   "background": "assets/Level_1_Artwork.png",
   "defaultHeroes": [
     "warrior"
-  ],
-  "swarms": [
-    {
-      "name": "Goblin raiders",
-      "monsters": [
-        {
-          "monster": "goblin",
-          "countPerHero": 1
-        }
-      ]
-    },
-    {
-      "name": "Bone patrol",
-      "monsters": [
-        {
-          "monster": "goblin",
-          "countPerHero": 1
-        },
-        {
-          "monster": "skeleton",
-          "count": 1
-        }
-      ]
-    }
   ],
   "boss": {
     "monster": "final_boss"
@@ -38,19 +14,16 @@
     "maxMana": 10,
     "startingDeck": [
       {
-        "card": "goblin_slash",
-        "count": 6
-      },
-      {
-        "card": "heavy_smash",
-        "count": 3
-      },
-      {
-        "card": "weakening_curse",
-        "count": 3
+        "card": "monster_attack",
+        "count": 12
       }
-    ],
-    "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
+    ]
   },
-  "temporary": true
+  "temporary": true,
+  "monsters": [
+    {
+      "monster": "goblin",
+      "countPerHero": 1
+    }
+  ]
 }

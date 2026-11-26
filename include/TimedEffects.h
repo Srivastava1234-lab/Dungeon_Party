@@ -1,19 +1,14 @@
-#ifndef DUNGEON_PARTY_TIMED_EFFECTS_H
-#define DUNGEON_PARTY_TIMED_EFFECTS_H
-
-#include <vector>
+#pragma once
 #include "Types.h"
+#include <vector>
 
-// SCRUM-55: the list of active timed effects on one character.
 class TimedEffects {
     std::vector<TimedEffect> effects;
-
 public:
-    void add(TimedEffectType type, int value, int rounds);
-    int valueOf(TimedEffectType type) const;    // 0 if not active
-    int roundsLeft(TimedEffectType type) const; // 0 if not active
-    void tick();                                // one round passed
-    const std::vector<TimedEffect>& all() const;
+    void add(TimedEffectType type, int value, int turns);
+    int valueOf(TimedEffectType type) const;
+    int roundsLeft(TimedEffectType type) const;
+    void tick();
+    void clear();
+    const std::vector<TimedEffect>& all() const { return effects; }
 };
-
-#endif

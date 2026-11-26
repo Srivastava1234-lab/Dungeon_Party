@@ -34,6 +34,7 @@ void Hero::takeDamage(int amount) {
     shield = 0;
 
     health = std::max(0, health - amount);
+    if (!isAlive()) timedEffects.clear();
 }
 
 void Hero::heal(int amount) {
@@ -152,9 +153,10 @@ TrapEffect Hero::getTrapEffect() const {
     return activeTrapEffect;
 }
 
-// ---- SCRUM-55 (Soroush): effects that last a number of rounds
+// ---- SCRUM-55 (Soroush): effects that last a number of target turns
 
 void Hero::addTimedEffect(TimedEffectType type, int value, int rounds) {
+    if (!isAlive()) throw std::invalid_argument("Cannot buff a defeated hero");
     timedEffects.add(type, value, rounds);
 }
 

@@ -45,6 +45,7 @@ struct CardDefinition {
 
     SpellTarget target = SpellTarget::ONE_ENEMY;
     int freezeRounds = 0;
+    int durationTurns = 2;
     int manaCost = 0;          // mana needed to play the card
     int value = 0;             // strength of the effect (damage, healing, ...)
     std::string description;   // short text for the HUD (without numbers)

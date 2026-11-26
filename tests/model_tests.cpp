@@ -14,7 +14,7 @@ int main() {
  Trap trap(5); trap.trigger(healer); trap.trigger(healer); assert(healer.getHealth()==25);
  assert(healer.drawCard()==nullptr);
  Warrior warrior("w", "Warrior", 30, 3);
- rejects([&]{warrior.addToDeck(std::make_unique<HeroCard>("Heal",1,HeroEffect::HEAL,5));});
+ rejects([&]{warrior.addToDeck(std::make_unique<HeroCard>("Greater Heal",1,HeroEffect::HEAL,5,std::string("Healer")));});
  rejects([&]{healer.addToDeck(std::make_unique<DMCard>("Summon",1,DMEffect::SUMMON,1));});
  HeroCard heal("Heal",1,HeroEffect::HEAL,5); heal.applyEffect(healer); assert(healer.getHealth()==30);
  Match match("test");

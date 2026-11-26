@@ -68,21 +68,30 @@ void spendingAndTurns() {
     Battle b(3);
     b.hero->addToDeck(strike("Exact cost", 3));
     b.hero->addToDeck(strike("Free", 0));
+    for (int i = 0; i < 6; ++i) b.hero->addToDeck(strike("Reserve", 0));
     b.dm->addToDeck(std::make_unique<DMCard>("Summon", 1, DMEffect::SUMMON, 1));
     b.match.start();
-    require(b.hero->getHandSize() == 1 && b.dm->getHandSize() == 0, "Only active player draws at start");
+    require(b.hero->getHandSize() == 7 && b.hero->getDeckSize() == 1 && b.dm->getHandSize() == 0,
+            "Hero opening hand reaches seven; DM waits for its own turn");
     b.match.apply(b.hero->getHandCard(0), *b.monster);
-    require(b.hero->getMana() == 0 && b.hero->getHandSize() == 0 && b.hero->getDiscardSize() == 1,
+    require(b.hero->getMana() == 0 && b.hero->getHandSize() == 6 && b.hero->getDiscardSize() == 1,
             "Successful play spends exact cost and discards once");
+    b.match.apply(b.hero->getHandCard(0), *b.monster);
+    b.match.apply(b.hero->getHandCard(0), *b.monster);
+    require(b.hero->getMana() == 0 && b.hero->getHandSize() == 4 && b.hero->getDiscardSize() == 3,
+            "Free cards preserve zero mana and each discard once");
     b.match.endTurn(*b.hero);
-    require(b.hero->getMana() == 0 && b.dm->getHandSize() == 1, "DM turn draws without refilling inactive hero");
+    require(b.hero->getMana() == 0 && b.dm->getHandSize() == 1,
+            "DM turn draws without refilling inactive hero");
     b.match.endTurn(*b.dm);
-    require(b.hero->getMana() == 3 && b.hero->getHandSize() == 1, "Next hero turn refills and draws one");
+    require(b.hero->getMana() == 3 && b.hero->getHandSize() == 6 &&
+            b.hero->getDeckSize() == 2 && b.hero->getDiscardSize() == 0,
+            "Next hero turn refills, draws two and recycles discard when the deck runs out");
     b.match.apply(b.hero->getHandCard(0), *b.monster);
     require(b.hero->getMana() == 3, "Free card must not spend mana");
     b.match.endTurn(*b.hero); b.match.endTurn(*b.dm);
-    require(b.hero->getHandSize() == 0 && b.hero->getDiscardSize() == 2 && b.hero->getMana() == 3,
-            "Empty deck on turn start must not recycle discard or stop refill");
+    require(b.hero->getHandSize() == 7 && b.hero->getDeckSize() == 0 && b.hero->getMana() == 3,
+            "Turn-start draws stop at the seven-card hand limit");
 }
 void rejectedPlay() {
     Battle b(2);

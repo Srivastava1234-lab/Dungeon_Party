@@ -236,21 +236,8 @@ never arrives after a fixed number of rounds.
 
 Older files with a single `"monsters": [...]` list instead of `"swarms"` still work: that list is one swarm.
 
----|---|---|---|
-| `number` | whole number | 1 or more, same as file name | Level number |
-| `name` | text | not empty | Name shown in the game |
-| `maxRounds` | whole number | 1 or more | Round limit: the DM side wins when it is reached (`Match::maxRounds`) |
-| `defaultHeroes` | list of hero ids | at least 1, each must exist in `heroes.json` | Heroes used when there is no role selection yet (Sprint 1 only) |
-| `monsters` | list | at least 1 entry | Monster kinds that appear in this level |
-| `monsters[].monster` | text | must exist in `monsters.json` | Which monster |
-| `monsters[].countPerHero` | whole number | 1 or more | How many of this monster appear **per hero player** |
-| `temporary` | true/false | required | `true` = values not final yet |
 
-A level stores **no fixed total number of monsters** and **no grid, tiles or positions**.
-The match setup works out the number of monsters as `countPerHero × number of hero players`.
-
-`assets/Level_1_Artwork.png` exists, but a level has no picture field yet, because the Sprint 1
-requirements only ask for hero and monster pictures.
+The match setup calculates each monster count as `countPerHero × number of hero players + count`.
 
 ---
 
@@ -319,3 +306,36 @@ The tests use temporary copies, leaving the real data files unchanged. They cove
 hero/DM effects, missing or malformed files, invalid fields and numbers, duplicate IDs,
 unknown effects, and invalid hero deck references. Loading a valid effect does not mean
 its gameplay behaviour is implemented.
+
+
+## SCRUM-62/64: supplied level and monster draft
+
+Monster composition and stats follow the team document *New levels designs and
+monster stats*. All supplied values remain `temporary: true`.
+
+| Level | Monsters per hero | Boss | Boss arrival | DM mana | DM deck |
+|---|---|---|---|---|---|
+| 1 (existing) | 1 Goblin | Final Boss | After the monster group | 10 | 12 Monster Attack |
+| 2: The Crypt | 2 Skeletons | Lich | After the monster group | 12 | 12 Monster Attack |
+| 3: The Dragon's Lair | 1 Goblin + 1 Orc | Dragon | After the monster group | 15 | 12 Monster Attack |
+
+Akshat's newer team clarification (25 November 2026) replaces the document's
+fixed boss arrival rounds. The level files omit `boss.arrivalRound`, so the
+existing swarm engine releases the boss after the monster group is defeated.
+The document's `monsters` lists remain single groups; no extra monsters are added.
+
+`monster_attack` is restored from the project's existing definition in commit
+`6eeec1d`: mana cost 3 and damage 12. Regular monsters deal the DM card's damage,
+as Kagan clarified; their individual `attackPower` values remain in the data.
+Boss attacks use their configured attack power.
+
+The round-limit removal mentioned by Akshat is not yet present in the checked
+main commit `fc07c44`: the engine still enforces the `maxRounds` field.
+Levels 2 and 3 retain the document's placeholder 30, and level 1 retains its
+existing value. This still needs reconciling with Akshat's updated code.
+
+Suat clarified that the existing Goblin artwork is used for Orc. The Orc entry
+therefore uses `assets/Goblin_Artwork.png`; its name and stats remain those from
+the draft. The existing Skeleton, Lich and Dragon images are also available
+under the document's filenames. New levels use the default background because
+the document does not specify backgrounds.

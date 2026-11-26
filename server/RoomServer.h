@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -33,11 +34,19 @@
 class RoomServer {
 public:
     // Listens on all network interfaces on 'port'. Throws std::runtime_error if the port is taken.
+    struct ResultPlayer {
+        std::string id; // permanent account ID; room ID only when login is disabled
+        std::string name;
+        std::string role;
+    };
+    using ResultSink = std::function<void(const std::string&, Side, const std::vector<ResultPlayer>&)>;
+
     // Turn time limits come from rules.json; 'turnSecondsOverride' > 0 replaces them for every
     // turn (used by the tests, and handy for a quick demo: dungeon_server 7777 <data> 15).
     // 'emptyRoomGrace': how long an empty room waits for players to reconnect (Taegan).
     RoomServer(const GameData& gameData, std::uint16_t port, int turnSecondsOverride = 0,
-               std::chrono::seconds emptyRoomGrace = std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS));
+               std::chrono::seconds emptyRoomGrace = std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS),
+               ResultSink resultSink = {});
     // Only a custom reconnect grace period (used by the reconnect tests)
     RoomServer(const GameData& gameData, std::uint16_t port, std::chrono::seconds emptyRoomGrace)
         : RoomServer(gameData, port, 0, emptyRoomGrace) {}
@@ -69,6 +78,7 @@ private:
         std::string code;
         std::string hostId;
         std::vector<Member> members;
+        bool resultSaved = false;
         std::unique_ptr<Match> match; // nullptr while waiting in the lobby
         int level = 1;                // SCRUM-63: chosen by the host when creating the room
         std::string levelName;        // shown in the lobby
@@ -94,6 +104,7 @@ private:
     net::EnetLibrary enetLibrary; // must be constructed before 'host' and destroyed after it
     ENetHost* host = nullptr;
     const GameData& gameData;
+    ResultSink resultSink;
     std::chrono::seconds emptyRoomGrace;
     std::mt19937 rng;
     int turnSecondsOverride = 0;

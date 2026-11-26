@@ -36,6 +36,7 @@
 #include "Protocol.h"
 #include "Renderer.h"
 #include "RoomServer.h"
+#include "MatchResultStore.h"
 
 using nlohmann::json;
 
@@ -101,7 +102,7 @@ HeroEffect effectFromName(const std::string& name) {
 }
 
 // Cards that are played on a hero instead of a monster
-bool targetsHero(const std::string& effect) { return effect == "HEAL" || effect == "SHIELD"; }
+bool targetsHero(const std::string& effect) { return effect == "HEAL" || effect == "SHIELD" || effect == "BUFF"; }
 
 // Safe readers: the state comes over the network, so a missing field must not crash the client.
 int intOr(const json& j, const char* key, int fallback = 0) {
@@ -761,8 +762,12 @@ int main() {
                     } else {
                         if (!localServer && gameData) {
                             try {
-                                localServer = std::make_unique<RoomServer>(*gameData, static_cast<std::uint16_t>(std::clamp(port, 1, 65535)));
-                                localServer->setAccountsFile(projectPath("accounts.json")); // ignored by git
+                                auto server = std::make_unique<RoomServer>(
+                                    *gameData, static_cast<std::uint16_t>(std::clamp(port, 1, 65535)), 0,
+                                    std::chrono::seconds(net::EMPTY_ROOM_GRACE_SECONDS),
+                                    makeMatchResultSink(projectPath("match-results.sqlite")));
+                                server->setAccountsFile(projectPath("accounts.json")); // ignored by git
+                                localServer = std::move(server);
                             } catch (const std::exception& e) {
                                 // Port already taken (e.g. another window on this computer is hosting):
                                 // we can still create a room on that server.
@@ -1087,7 +1092,7 @@ int main() {
                                                   (!iAmDm && selectedCard >= 0 && targetsHero(selectedEffect)));
                 ImGui::PushID(static_cast<int>(i));
                 const bool clicked = drawCharacter({label, intOr(hero, "hp"), intOr(hero, "maxHp", 1), intOr(hero, "mana"),
-                                                    intOr(hero, "maxMana"), textureOr0(heroTextures, strOr(hero, "heroId"))},
+                                                    intOr(hero, "maxMana"), textureOr0(heroTextures, strOr(hero, "heroId")), intOr(hero, "buffTurns")},
                                                    scale, canTarget);
                 ImGui::PopID();
                 if (clicked && canTarget) {

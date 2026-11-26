@@ -95,6 +95,29 @@
       "value": 5,
       "description": "Reduce the attack of one hero.",
       "temporary": true
+    },
+    {
+      "id": "battle_cry",
+      "name": "Battle Cry",
+      "side": "HEROES",
+      "effect": "BUFF",
+      "manaCost": 8,
+      "value": 5,
+      "durationTurns": 2,
+      "description": "Give yourself or one living teammate +5 damage on damaging cards for 2 of their turns. Replaying refreshes the duration.",
+      "temporary": true
+    },
+    {
+      "id": "monster_attack",
+      "name": "Monster Attack",
+      "side": "DUNGEON_MASTER",
+      "effect": "ATTACK",
+      "manaCost": 3,
+      "value": 12,
+      "description": "Order one monster to attack one hero at the end of the DM turn.",
+      "image": "assets/Attack_Card.png",
+      "temporary": true,
+      "_note": "Placeholder values (Sprint 2 networking). Confirm with Irma."
     }
   ]
 }

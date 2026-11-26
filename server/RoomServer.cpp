@@ -74,8 +74,9 @@ std::string readString(const json& message, const char* key) {
 
 // ===================== Setup =====================
 
-RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride, std::chrono::seconds grace)
-    : gameData(data), emptyRoomGrace(grace), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
+RoomServer::RoomServer(const GameData& data, std::uint16_t port, int turnSecondsOverride, std::chrono::seconds grace,
+                       ResultSink sink)
+    : gameData(data), resultSink(std::move(sink)), emptyRoomGrace(grace), rng(std::random_device{}()), turnSecondsOverride(turnSecondsOverride) {
     ENetAddress address{};
     address.host = ENET_HOST_ANY; // listen on every network interface
     address.port = port;
@@ -449,7 +450,11 @@ void RoomServer::handleStart(ENetPeer* peer, Room& room, Member& member) {
 
 std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
     const LevelDefinition level = gameData.loadLevel(room.level);
-    auto match = std::make_unique<Match>(room.code, level.maxRounds);
+    std::random_device random;
+    std::uniform_int_distribution<int> digit(0, 15);
+    std::string matchId(32, '0');
+    for (char& c : matchId) c = "0123456789abcdef"[digit(random)];
+    auto match = std::make_unique<Match>(std::move(matchId), level.maxRounds);
 
     // Heroes: everyone who didn't pick DM. No role chosen = the level's default hero.
     int heroCount = 0;
@@ -484,7 +489,7 @@ std::unique_ptr<Match> RoomServer::buildMatch(const Room& room) {
                     hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value,
                                                                card.target, card.freezeRounds));
                 else
-                    hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value));
+                    hero->addToDeck(std::make_unique<HeroCard>(card.name, card.manaCost, *card.heroEffect, card.value, std::nullopt, SupportTarget::SELF_ONLY, card.durationTurns));
             }
         }
         match->addPlayer(std::move(hero));
@@ -788,6 +793,18 @@ void RoomServer::broadcastInfo(const Room& room, const std::string& text) {
 
 void RoomServer::broadcastState(Room& room) {
     restartTimerIfTurnChanged(room); // every turn change ends up here, so the timer can never miss one
+    if (const auto winner = room.match->getWinner(); winner && resultSink && !room.resultSaved) {
+        std::vector<ResultPlayer> players;
+        players.reserve(room.members.size());
+        for (const auto& member : room.members)
+            players.push_back({member.playerId.empty() ? member.id : member.playerId, member.name, member.role});
+        try {
+            resultSink(room.match->getMatchId(), *winner, players);
+            room.resultSaved = true;
+        } catch (const std::exception& error) {
+            std::cerr << "Could not save match " << room.match->getMatchId() << ": " << error.what() << '\n';
+        }
+    }
     for (const auto& m : room.members)
         if (m.peer) send(m.peer, stateFor(room, m)); // each member gets their own view
 }
@@ -832,6 +849,8 @@ json RoomServer::stateFor(const Room& room, const Member& viewer) const {
                           {"playerId", accountId},
                           {"hp", hero->getHealth()}, {"maxHp", hero->getMaxHealth()},
                           {"mana", hero->getMana()}, {"maxMana", hero->getMaxMana()},
+                          {"buffTurns", hero->getTimedEffects().roundsLeft(TimedEffectType::BUFF)},
+                          {"buffValue", hero->getTimedEffects().valueOf(TimedEffectType::BUFF)},
                           {"handSize", hero->getHandSize()}, {"connected", connected}});
 
         // Hidden information: only the viewer's own cards are sent to them.

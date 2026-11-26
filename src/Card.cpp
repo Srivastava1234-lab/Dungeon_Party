@@ -16,8 +16,9 @@ Card::Card(const std::string& n, int cost)
         } 
     }
 
-HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, std::optional<std::string> requiredClass, SupportTarget supportTarget) 
-    : Card(std::move(n), c), effect(e), value(v), requiredClass(requiredClass), supportTarget(supportTarget){
+HeroCard::HeroCard(std::string n, int c, HeroEffect e, int v, std::optional<std::string> requiredClass, SupportTarget supportTarget, int durationTurns)
+    : Card(std::move(n), c), effect(e), value(v), requiredClass(requiredClass), supportTarget(supportTarget), durationTurns(durationTurns){
+        if (e == HeroEffect::BUFF && durationTurns <= 0) throw std::invalid_argument("Buff needs positive duration");
         if (v < 0){
             throw std::invalid_argument("negative effect value");
         }
@@ -57,7 +58,7 @@ void HeroCard::applyEffect(Targetable& target) const {
             monster->freezeNextAttack();
         }
 
-    } else if (effect == HeroEffect::HEAL || effect == HeroEffect::SHIELD) {
+    } else if (effect == HeroEffect::HEAL || effect == HeroEffect::SHIELD || effect == HeroEffect::BUFF) {
         Hero* hero = dynamic_cast<Hero*>(&target);
 
         if (hero == nullptr) {
@@ -68,7 +69,9 @@ void HeroCard::applyEffect(Targetable& target) const {
             throw std::invalid_argument("Cannot target a defeated hero");
         }
 
-        if (effect == HeroEffect::HEAL) {
+        if (effect == HeroEffect::BUFF) {
+            hero->addTimedEffect(TimedEffectType::BUFF, value, durationTurns);
+        } else if (effect == HeroEffect::HEAL) {
             hero->heal(value);
         } else {
             hero->addShield(value);

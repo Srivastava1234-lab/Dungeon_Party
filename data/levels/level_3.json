@@ -1,0 +1,32 @@
+{
+  "number": 3,
+  "name": "The Dragon's Lair",
+  "maxRounds": 30,
+  "boss": {
+    "monster": "dragon"
+  },
+  "defaultHeroes": [
+    "warrior"
+  ],
+  "monsters": [
+    {
+      "monster": "goblin",
+      "countPerHero": 1
+    },
+    {
+      "monster": "orc",
+      "countPerHero": 1
+    }
+  ],
+  "dungeonMaster": {
+    "maxMana": 15,
+    "startingDeck": [
+      {
+        "card": "monster_attack",
+        "count": 12
+      }
+    ]
+  },
+  "temporary": true,
+  "_note": "Monster composition and values follow the supplied draft. Per Akshat's newer clarification, the boss enters after the monster group is defeated."
+}

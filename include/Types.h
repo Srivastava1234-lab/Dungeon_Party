@@ -17,13 +17,14 @@ struct CheckResult { bool valid; std::optional<std::string> reason; };
 struct HeroType { HeroClass heroClass; int maxHealth; };
 enum class SupportTarget {SELF_ONLY, SELF_OR_ALLY};
 enum class TrapEffect {DAMAGE, DISCARD, MANA_DRAIN};
-// SCRUM-55: effects that last a number of rounds
+// SCRUM-55: effects that last a number of the target hero's turns
 enum class TimedEffectType { BUFF };
 
 struct TimedEffect {
     TimedEffectType type;
     int value;       // strength of the effect, e.g. the buff bonus
-    int roundsLeft;  // counts down once per round; removed at 0
+    int roundsLeft;  // counts down at the target hero's turn end; removed at 0
 };
+
 
 #endif

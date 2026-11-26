@@ -187,10 +187,7 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
     if (!hc){
         return fail("DM effects are not implemented yet");
     } 
-    if (hc->getEffect() == HeroEffect::BUFF){
-        return fail("Buff rules are not implemented yet");
-    } 
-    if (hc->getEffect() == HeroEffect::HEAL || hc->getEffect() == HeroEffect::SHIELD) {
+    if (hc->getEffect() == HeroEffect::HEAL || hc->getEffect() == HeroEffect::SHIELD || hc->getEffect() == HeroEffect::BUFF) {
 
         const Hero* caster = dynamic_cast<const Hero*>(&p);
 
@@ -202,26 +199,16 @@ CheckResult Match::validate(const Player& p, const Card& c, const Targetable& t)
             if (heroes[i] == &t && heroes[i]->isAlive()) {
                 bool targetingSelf = heroes[i] == caster;
 
-                if (!targetingSelf) {
-                    if (hc->getEffect() == HeroEffect::SHIELD) {
-                        if (!caster->canShieldAllies()) {
-                            return fail(
-                                "This hero cannot shield allies"
-                            );
-                        }
-                    } else {
-                        if (!caster->canHealAllies()) {
-                            return fail(
-                                "This hero cannot heal allies"
-                            );
-                        }
-
-                        if (hc->getSupportTarget() ==
-                        SupportTarget::SELF_ONLY) {
-                            return fail(
-                                "This healing card can only target yourself"
-                            );
-                        }
+                if (!targetingSelf && hc->getEffect() == HeroEffect::SHIELD &&
+                    !caster->canShieldAllies()) {
+                    return fail("This hero cannot shield allies");
+                }
+                if (!targetingSelf && hc->getEffect() == HeroEffect::HEAL) {
+                    if (!caster->canHealAllies()) {
+                        return fail("This hero cannot heal allies");
+                    }
+                    if (hc->getSupportTarget() == SupportTarget::SELF_ONLY) {
+                        return fail("This healing card can only target yourself");
                     }
                 }
 
@@ -367,6 +354,7 @@ void Match::endTurn(Player& p) {
 
         if (endingHero != nullptr) {
             endingHero->clearManaTrap();
+            endingHero->tickEffects();
         }
 
         do { ++activeHero; } while (activeHero < heroes.size() && !heroes[activeHero]->isAlive());
@@ -440,11 +428,6 @@ void Match::endTurn(Player& p) {
 
         // These orders must not run again next round.
         monsterActions.clear();
-
-        // SCRUM-55: the round is over, every timed effect loses one round.
-        for (std::size_t i = 0; i < heroes.size(); i++) {
-            heroes[i]->tickEffects();
-        }
 
         checkWinner();
         if (isFinished()){

@@ -1,60 +1,28 @@
 {
-  "_note": "Level 2: mixed swarms (skeletons, goblins, a lich), then the Dungeon Master enters as the Red Dragon. Replaces the temporary copy of level 1 (SCRUM-63).",
   "number": 2,
-  "name": "Level 2: The Dragon's Lair",
-  "maxRounds": 14,
-  "background": "assets/Level_2_Artwork.png",
+  "name": "The Crypt",
+  "maxRounds": 30,
+  "boss": {
+    "monster": "lich"
+  },
   "defaultHeroes": [
     "warrior"
   ],
-  "swarms": [
+  "monsters": [
     {
-      "name": "Crypt guards",
-      "monsters": [
-        {
-          "monster": "skeleton",
-          "countPerHero": 1
-        },
-        {
-          "monster": "goblin",
-          "count": 1
-        }
-      ]
-    },
-    {
-      "name": "The Lich's court",
-      "monsters": [
-        {
-          "monster": "lich",
-          "count": 1
-        },
-        {
-          "monster": "skeleton",
-          "countPerHero": 1
-        }
-      ]
+      "monster": "skeleton",
+      "countPerHero": 2
     }
   ],
-  "boss": {
-    "monster": "dragon"
-  },
   "dungeonMaster": {
     "maxMana": 12,
     "startingDeck": [
       {
-        "card": "goblin_slash",
-        "count": 5
-      },
-      {
-        "card": "heavy_smash",
-        "count": 5
-      },
-      {
-        "card": "weakening_curse",
-        "count": 3
+        "card": "monster_attack",
+        "count": 12
       }
-    ],
-    "_note": "Placeholder values (Sprint 3: swarms and levels). Confirm with Irma."
+    ]
   },
-  "temporary": true
+  "temporary": true,
+  "_note": "Monster composition and values follow the supplied draft. Per Akshat's newer clarification, the boss enters after the monster group is defeated."
 }

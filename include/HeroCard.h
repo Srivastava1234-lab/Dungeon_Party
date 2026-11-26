@@ -12,15 +12,17 @@ class HeroCard : public Card {
     SupportTarget supportTarget;
     SpellTarget target = SpellTarget::ONE_ENEMY; // spells (Hülya, Sprint 2)
     int freezeRounds = 0;
+    int durationTurns = 2;
 public:
     // Class-restricted / support cards (Kagan)
-    HeroCard(std::string name, int cost, HeroEffect effect, int value, std::optional<std::string> requiredClass = std::nullopt, SupportTarget supportTarget = SupportTarget::SELF_ONLY);
+    HeroCard(std::string name, int cost, HeroEffect effect, int value, std::optional<std::string> requiredClass = std::nullopt, SupportTarget supportTarget = SupportTarget::SELF_ONLY, int durationTurns = 2);
     // Spells with a target rule and optional freeze (Hülya)
     HeroCard(std::string name, int cost, HeroEffect effect, int value, SpellTarget target, int freezeRounds = 0);
     SpellTarget getTarget() const { return target; }
     int getFreezeRounds() const { return freezeRounds; }
     HeroEffect getEffect() const;
     int getValue() const;
+    int getDurationTurns() const { return durationTurns; }
     bool canBePlayedBy(const Player& player) const override;
     void applyEffect(Targetable& target) const override;
     SupportTarget getSupportTarget() const;

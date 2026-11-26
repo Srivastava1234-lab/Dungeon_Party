@@ -27,7 +27,7 @@ int main() {
     // Greater Heal must be restricted to Healers.
     HeroCard greaterHeal(
         "Greater Heal", 2, HeroEffect::HEAL, 10,
-        HeroClass::HEALER,
+        std::string("Healer"),
         SupportTarget::SELF_OR_ALLY
     );
 
@@ -39,7 +39,7 @@ int main() {
         healer->addToDeck(
             std::make_unique<HeroCard>(
                 "Greater Heal", 2, HeroEffect::HEAL, 10,
-                HeroClass::HEALER,
+                std::string("Healer"),
                 SupportTarget::SELF_OR_ALLY
             )
         );

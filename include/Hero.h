@@ -16,7 +16,7 @@ private:
     bool manaTrapActive = false;
     int manaSpentForTrap = 0;
     TrapEffect activeTrapEffect = TrapEffect::DAMAGE;
-    TimedEffects timedEffects;          // SCRUM-55 (Soroush): effects that last a number of rounds
+    TimedEffects timedEffects;          // SCRUM-55 (Soroush): effects that last a number of target turns
 
 
 public:

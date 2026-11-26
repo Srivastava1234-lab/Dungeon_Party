@@ -65,7 +65,7 @@ void run(const std::string& name, const fs::path& source) {
     if (name == "valid_effects") {
         auto root = original;
         const json base = root["cards"][0];
-        for (const char* effect : {"ATTACK", "HEAL", "BUFF", "SPELL", "SHIELD"}) {
+        for (const char* effect : {"ATTACK", "HEAL", "BUFF", "SPELL", "SHIELD", "FIREBALL"}) {
             auto card = base;
             card["id"] = std::string("hero_") + effect;
             // IDs must use lowercase letters.
@@ -79,7 +79,7 @@ void run(const std::string& name, const fs::path& source) {
             }
             root["cards"].push_back(card);
         }
-        for (const char* effect : {"SUMMON", "TRAP", "DEFENSIVE", "ATTACK", "WEAKNESS"}) {
+        for (const char* effect : {"SUMMON", "TRAP", "DEFENSIVE", "ATTACK", "WEAKNESS", "MANA_TRAP", "DISCARD_TRAP", "MANA_DRAIN_TRAP"}) {
             auto card = base;
             std::string id = std::string("dm_") + effect;
             for (char& c : id) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
@@ -88,12 +88,24 @@ void run(const std::string& name, const fs::path& source) {
             root["cards"].push_back(card);
         }
         fixture.write("cards.json", root);
+        auto heroes = fixture.read("heroes.json");
+        auto wizard = heroes["heroes"][0];
+        wizard["id"] = "wizard_test";
+        wizard["heroClass"] = "WIZARD";
+        heroes["heroes"].push_back(wizard);
+        fixture.write("heroes.json", heroes);
         const GameData data(fixture.folder.string());
-        check(data.getCards().size() == original["cards"].size() + 10, "Cards lost while loading");
+        check(data.getHero("wizard_test").heroClass == HeroClass::WIZARD,
+              "Wizard subclass must be supported by the data loader");
+        check(data.getCards().size() == root["cards"].size(), "Cards lost while loading");
         const auto& attack = data.getCard("dm_attack");
         check(attack.side == Side::DUNGEON_MASTER && attack.dmEffect == DMEffect::ATTACK &&
               !attack.heroEffect && attack.manaCost == 0 && attack.value == INT_MAX,
               "DM attack data was not preserved");
+        check(data.getCard("dm_mana_trap").dmEffect == DMEffect::MANA_TRAP &&
+              data.getCard("dm_discard_trap").dmEffect == DMEffect::DISCARD_TRAP &&
+              data.getCard("dm_mana_drain_trap").dmEffect == DMEffect::MANA_DRAIN_TRAP,
+              "Trap effects were not preserved");
         const auto& spell = data.getCard("hero_spell");
         check(spell.heroEffect == HeroEffect::SPELL && spell.target == SpellTarget::ONE_ENEMY &&
               spell.freezeRounds == 1, "Spell fields were not preserved");
