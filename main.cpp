@@ -12,6 +12,7 @@
 
 #include <functional>
 #include <algorithm>
+#include <cctype>   // std::toupper (class names on the result screen)
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -90,7 +91,7 @@ const char* roleVoiceFile(LobbyRole role) {
         default:                 return nullptr;
     }
 }
-enum class OnlineScreen { Start, Menu, Connecting, Lobby, Battle };
+enum class OnlineScreen { Start, Menu, Connecting, Lobby, Battle, Result };
 
 HeroEffect effectFromName(const std::string& name) {
     if (name == "HEAL") return HeroEffect::HEAL;
@@ -431,6 +432,7 @@ int main() {
                     {"username", nameBuf}, {"password", passBuf}};
     };
     bool openLoginPopup = false;           // set by New Adventure / Join
+    bool showHistory = false;              // set by History for match results
     std::string loginError;
     std::string loggedInServer;            // "address:port" where the login was accepted, "" = none
     std::function<void()> pendingConnect;  // the host/join action, run after Log in / Sign up
@@ -615,7 +617,7 @@ int main() {
                 turnEndsAt = turnSecondsTotal > 0 ? glfwGetTime() + intOr(message, "turnMsLeft") / 1000.0 : 0.0;
                 hostId = strOr(message, "host", hostId);
                 screen = OnlineScreen::Battle;
-                if (!state["winner"].is_null()) clearSessionFromDisk(); // finished match needs no reconnect
+                if (!state["winner"].is_null()){ clearSessionFromDisk(); screen = OnlineScreen::Result;} // finished match needs no reconnect
                 const std::string active = message["active"].is_string() ? message["active"].get<std::string>() : "";
                 if (active != lastActive) { // a new turn started: forget the old selection
                     lastActive = active;
@@ -1208,23 +1210,174 @@ int main() {
             ImGui::EndChild();
             ImGui::End();
 
-            // ---- Game over: Heroes_Win / Heroes_Lose
-            if (finished) {
-                const bool heroesWon = strOr(state, "winner") == "HEROES";
-                ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-                ImGui::Begin("GameOver", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
-                const GLuint picture = heroesWon ? heroesWinPicture : heroesLosePicture;
-                if (picture) ImGui::Image((ImTextureID)(intptr_t)picture, ImVec2(480, 300));
-                ImGui::SetWindowFontScale(1.6f);
-                const bool iWon = heroesWon != iAmDm;
-                ImGui::Text("%s win! %s", heroesWon ? "The heroes" : "The Dungeon Master", iWon ? "You won." : "You lost.");
-                ImGui::SetWindowFontScale(1.0f);
-                if (ImGui::Button("Back to menu", ImVec2(-1, 36))) leaveAndBackToMenu("");
-                ImGui::End();
-            }
         }
+        // ================= SCREEN 5: Result =================
+        // ---- Game over: Heroes_Win / Heroes_Lose
+        else if (screen == OnlineScreen::Result ){
+            const bool heroesWon = strOr(state, "winner") == "HEROES";
+            const bool iAmDm = strOr(state, "role") == "dm";
+            const bool iWon = heroesWon != iAmDm;
+            (heroesWon)? drawBackground(heroesWinPicture) : drawBackground(heroesLosePicture);
+            beginFullscreenWindow("Result", 0.0f);
+            pushMenuStyle();
+            ImGui::PushFont(titleFont);
+            ImGui::SetWindowFontScale(1.5f);
+            const char* title = iWon ? "Victory!" : "Defeat!";
+            const ImVec4 color = iWon ? ImVec4(1.0f, 0.82f, 0.45f, 1.0f)   
+                                    : ImVec4(0.70f, 0.08f, 0.06f, 1.0f);    
+            const float width = ImGui::CalcTextSize(title).x;
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - width) * 0.5f);
+            ImGui::SetCursorPosY(ImGui::GetWindowHeight() * 0.30f);
+            ImGui::TextColored(color, "%s", title);
+            const float titleBottom = ImGui::GetCursorPosY(); // the box starts below Victory!/Defeat!
+            ImGui::PopFont();
+            popMenuStyle();
+            ImGui::SetWindowFontScale(1.0f);
+            // Darker, semi-transparent rounded box so the text reads well on the picture
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.06f, 0.05f, 0.82f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
 
+            // One box, always just below Victory!/Defeat!. Its height follows its content
+            // (AutoResizeY), so with History open it simply grows downwards.
+            const float boxWidth = 800.0f;
+            ImGui::SetCursorPos(ImVec2((ImGui::GetWindowWidth() - boxWidth) * 0.5f, titleBottom + 10.0f));
+            ImGui::BeginChild("results", ImVec2(boxWidth, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+            pushMenuStyle();
+
+                const ImVec4 gold(1.0f, 0.82f, 0.45f, 1.0f);
+                const ImVec4 red(0.70f, 0.08f, 0.06f, 1.0f);
+                const ImVec4 cream(1.0f, 0.92f, 0.75f, 1.0f);
+                const ImVec4 dim(0.65f, 0.60f, 0.52f, 1.0f);
+
+                // "warrior" -> "Warrior"
+                auto className = [](std::string id) {
+                    if (!id.empty()) id[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[0])));
+                    return id;
+                };
+
+                // Small dim line: which server this match was played on
+                ImGui::TextColored(dim, "Server %s:%u", activeSession.address.c_str(), activeSession.port);
+                ImGui::Spacing();
+
+                // Stat tiles: small label on top, big value below
+                const json dm = state.value("dm", json::object());
+                const std::string tileLabels[4] = {"ROUNDS", "SWARMS", "FINAL BOSS", "DUNGEON MASTER"};
+                const std::string tileValues[4] = {
+                    std::to_string(intOr(state, "round")),
+                    std::to_string(intOr(state, "swarm")) + "/" + std::to_string(intOr(state, "swarms")),
+                    boolOr(state, "bossArrived") ? "Reached" : "Not reached",
+                    boolOr(dm, "human") ? "Human" : "Bot"};
+                if (ImGui::BeginTable("tiles", 4, ImGuiTableFlags_SizingStretchSame)) {
+                    ImGui::TableNextRow();
+                    for (int t = 0; t < 4; ++t) {
+                        ImGui::TableSetColumnIndex(t);
+                        ImGui::TextColored(dim, "%s", tileLabels[t].c_str());
+                        ImGui::PushFont(titleFont);
+                        ImGui::SetWindowFontScale(0.5f);
+                        ImGui::TextColored(gold, "%s", tileValues[t].c_str());
+                        ImGui::SetWindowFontScale(1.0f);
+                        ImGui::PopFont();
+                    }
+                    ImGui::EndTable();
+                }
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                // The team table: you first, then everyone else
+                const std::string me = strOr(state, "you");
+                const json heroes = state.value("heroes", json::array());
+                if (ImGui::BeginTable("team", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                                 ImGuiTableFlags_SizingStretchProp)) {
+                    ImGui::TableSetupColumn("Adventurer", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+                    ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    ImGui::TableSetupColumn("Fate", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                    // Header row in gold
+                    ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                    const char* headers[3] = {"ADVENTURER", "CLASS", "FATE"};
+                    for (int c = 0; c < 3; ++c) {
+                        ImGui::TableSetColumnIndex(c);
+                        ImGui::TextColored(gold, "%s", headers[c]);
+                    }
+                    for (int pass = 0; pass < 2; ++pass) {
+                        for (const auto& hero : heroes) {
+                            const bool isMe = strOr(hero, "id") == me;
+                            if ((pass == 0) != isMe) continue;   // pass 0: only you, pass 1: only the others
+                            const bool survived = intOr(hero, "hp") > 0;
+                            ImGui::TableNextRow();
+                            if (isMe) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                                             ImGui::GetColorU32(ImVec4(1.0f, 0.82f, 0.45f, 0.15f)));
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextColored(isMe ? gold : cream, "%s%s", strOr(hero, "name").c_str(), isMe ? " (you)" : "");
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TextColored(cream, "%s", className(strOr(hero, "heroId")).c_str());
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::TextColored(survived ? gold : red, "%s", survived ? "Survived" : "Fallen");
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+                ImGui::Dummy(ImVec2(0, 15)); // gap before the buttons
+
+                const float buttonW = 110;
+                const float total = buttonW * 2 + ImGui::GetStyle().ItemSpacing.x;  
+                ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total) * 0.5f);
+                if(ImGui::Button("Play Again", ImVec2(buttonW,40))) {showHistory = false; leaveAndBackToMenu(""); }
+                ImGui::SameLine();
+                if(ImGui::Button(showHistory ? " Back " : " History ", ImVec2(buttonW,40))) showHistory = !showHistory;
+
+                // Previous matches, below the buttons, with the same gap
+                if (showHistory) {
+                    ImGui::Dummy(ImVec2(0, 15));
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::TextColored(gold, "PREVIOUS MATCHES: %s", nameBuf);
+                    ImGui::Spacing();
+
+                    // TEMPORARY: replace with the server's history reply (Huelya): latest 7 matches, newest first
+                    const json history = json::array({
+                        {{"finishedAt", "2026-11-27T18:42:10Z"}, {"role", "warrior"}, {"winner", "HEROES"}},
+                        {{"finishedAt", "2026-11-26T20:05:33Z"}, {"role", "dm"},      {"winner", "HEROES"}},
+                        {{"finishedAt", "2026-11-25T16:12:48Z"}, {"role", "wizard"},  {"winner", "DUNGEON_MASTER"}},
+                    });
+
+                    if (ImGui::BeginTable("history", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                                        ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn("Date", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+                        ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                        ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                        const char* historyHeaders[3] = {"DATE", "CLASS", "RESULT"};
+                        for (int c = 0; c < 3; ++c) {
+                            ImGui::TableSetColumnIndex(c);
+                            ImGui::TextColored(gold, "%s", historyHeaders[c]);
+                        }
+                        for (const auto& row : history) {
+                            const std::string role = strOr(row, "role");
+                            const bool won = (strOr(row, "winner") == "HEROES") != (role == "dm"); // same rule as iWon
+                            std::string when = strOr(row, "finishedAt");              // "2026-11-27T18:42:10Z"
+                            if (when.size() >= 16) when = when.substr(0, 10) + " " + when.substr(11, 5); // "2026-11-27 18:42"
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextColored(cream, "%s", when.c_str());
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TextColored(cream, "%s", role == "dm" ? "Dungeon Master" : className(role).c_str());
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::TextColored(won ? gold : red, "%s", won ? "Victory" : "Defeat");
+                        }
+                        ImGui::EndTable();
+                    }
+                }
+
+            popMenuStyle();
+            ImGui::EndChild();
+            ImGui::PopStyleVar();   // ChildRounding
+            ImGui::PopStyleColor(); // ChildBg
+        
+            
+            
+            ImGui::End();
+        }
         if (reconnecting) {
             ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(420, 0));
@@ -1244,7 +1397,7 @@ int main() {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
     }
-
+    
     client.disconnect();
     localServer.reset();
     shutdownAudio(); 
